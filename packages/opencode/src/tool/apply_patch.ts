@@ -1,5 +1,7 @@
 import * as path from "path"
 import { Effect, Schema } from "effect"
+import { Jev } from "@opencode-ai/core/jev"
+import { FileMutation } from "@opencode-ai/core/file-mutation"
 import * as Tool from "./tool"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Watcher } from "@opencode-ai/core/filesystem/watcher"
@@ -24,6 +26,7 @@ export const ApplyPatchTool = Tool.define(
   Effect.gen(function* () {
     const lsp = yield* LSP.Service
     const afs = yield* FSUtil.Service
+    const mutation = yield* FileMutation.Service
     const format = yield* Format.Service
     const events = yield* EventV2Bridge.Service
 
@@ -68,17 +71,23 @@ export const ApplyPatchTool = Tool.define(
       }> = []
 
       let totalDiff = ""
+      const mutations: FileMutation.ConditionalMutationInput[] = []
 
       for (const hunk of hunks) {
         const filePath = path.resolve(instance.directory, hunk.path)
         yield* assertExternalDirectoryEffect(ctx, filePath)
+        const target = { canonical: yield* afs.resolve(filePath), resource: path.relative(instance.worktree, filePath) }
 
         switch (hunk.type) {
           case "add": {
-            const oldContent = ""
+            const source = yield* Bom.readFile(afs, filePath).pipe(
+              Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(undefined)),
+            )
+            const oldContent = source?.text ?? ""
             const newContent =
               hunk.contents.length === 0 || hunk.contents.endsWith("\n") ? hunk.contents : `${hunk.contents}\n`
             const next = Bom.split(newContent)
+            mutations.push({ target, expected: source?.content, content: Bom.join(next.text, next.bom) })
             const diff = trimDiff(createTwoFilesPatch(filePath, filePath, oldContent, next.text))
 
             let additions = 0
@@ -130,24 +139,60 @@ export const ApplyPatchTool = Tool.define(
               return yield* Effect.fail(new Error(`apply_patch verification failed: ${error}`))
             }
 
-            const diff = trimDiff(createTwoFilesPatch(filePath, filePath, oldContent, newContent))
+            const movePath = hunk.move_path ? path.resolve(instance.directory, hunk.move_path) : undefined
+            yield* assertExternalDirectoryEffect(ctx, movePath)
+            const destination =
+              movePath && movePath !== filePath
+                ? yield* Bom.readFile(afs, movePath).pipe(
+                    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(undefined)),
+                  )
+                : undefined
+            const diffPath = destination && movePath ? movePath : filePath
+            const diff = trimDiff(createTwoFilesPatch(diffPath, diffPath, destination?.text ?? oldContent, newContent))
 
             let additions = 0
             let deletions = 0
-            for (const change of diffLines(oldContent, newContent)) {
+            for (const change of diffLines(destination?.text ?? oldContent, newContent)) {
               if (change.added) additions += change.count || 0
               if (change.removed) deletions += change.count || 0
             }
 
-            const movePath = hunk.move_path ? path.resolve(instance.directory, hunk.move_path) : undefined
-            yield* assertExternalDirectoryEffect(ctx, movePath)
+            if (movePath && movePath !== filePath) {
+              mutations.push(
+                {
+                  target: {
+                    canonical: yield* afs.resolve(movePath),
+                    resource: path.relative(instance.worktree, movePath),
+                  },
+                  expected: destination?.content,
+                  content: Bom.join(newContent, bom),
+                },
+                { target, expected: source.content },
+              )
+              if (destination) {
+                const removed = trimDiff(createTwoFilesPatch(filePath, filePath, oldContent, ""))
+                fileChanges.push({
+                  filePath,
+                  oldContent,
+                  newContent: "",
+                  type: "delete",
+                  diff: removed,
+                  additions: 0,
+                  deletions: diffLines(oldContent, "").reduce((count, change) => count + (change.count ?? 0), 0),
+                  bom: source.bom,
+                })
+                totalDiff += removed + "\n"
+              }
+            } else {
+              mutations.push({ target, expected: source.content, content: Bom.join(newContent, bom) })
+            }
 
             fileChanges.push({
-              filePath,
-              oldContent,
+              filePath: diffPath,
+              oldContent: destination?.text ?? oldContent,
               newContent,
-              type: hunk.move_path ? "move" : "update",
-              movePath,
+              type: destination ? "update" : hunk.move_path ? "move" : "update",
+              movePath: destination ? undefined : movePath,
               diff,
               additions,
               deletions,
@@ -169,6 +214,7 @@ export const ApplyPatchTool = Tool.define(
               ),
             )
             const contentToDelete = source.text
+            mutations.push({ target, expected: source.content })
             const deleteDiff = trimDiff(createTwoFilesPatch(filePath, filePath, contentToDelete, ""))
 
             const deletions = contentToDelete.split("\n").length
@@ -190,6 +236,11 @@ export const ApplyPatchTool = Tool.define(
         }
       }
 
+      const targets = mutations.map((change) => change.target.canonical)
+      if (new Set(targets).size !== targets.length) {
+        return yield* Effect.fail(new Error("apply_patch verification failed: multiple changes target the same file"))
+      }
+
       // Build per-file metadata for UI rendering (used for both permission and result)
       const files = fileChanges.map((change) => ({
         filePath: change.filePath,
@@ -202,7 +253,15 @@ export const ApplyPatchTool = Tool.define(
       }))
 
       // Check permissions if needed
-      const relativePaths = fileChanges.map((c) => path.relative(instance.worktree, c.filePath).replaceAll("\\", "/"))
+      const relativePaths = [
+        ...new Set(
+          fileChanges.flatMap((change) =>
+            [change.filePath, ...(change.movePath ? [change.movePath] : [])].map((file) =>
+              path.relative(instance.worktree, file).replaceAll("\\", "/"),
+            ),
+          ),
+        ),
+      ]
       yield* ctx.ask({
         permission: "edit",
         patterns: relativePaths,
@@ -215,36 +274,39 @@ export const ApplyPatchTool = Tool.define(
       })
 
       // Apply the changes
+      for (const change of fileChanges) {
+        if (change.type === "delete") continue
+        yield* Effect.promise(() =>
+          Jev.guardChange(
+            ctx.sessionID,
+            change.movePath ?? change.filePath,
+            change.type === "move" ? "" : change.oldContent,
+            change.newContent,
+          ),
+        )
+      }
+      yield* mutation.applyIfUnchanged(mutations)
       const updates: Array<{ file: string; event: "add" | "change" | "unlink" }> = []
 
       for (const change of fileChanges) {
         const edited = change.type === "delete" ? undefined : (change.movePath ?? change.filePath)
         switch (change.type) {
           case "add":
-            // Create parent directories (recursive: true is safe on existing/root dirs)
-
-            yield* afs.writeWithDirs(change.filePath, Bom.join(change.newContent, change.bom))
             updates.push({ file: change.filePath, event: "add" })
             break
 
           case "update":
-            yield* afs.writeWithDirs(change.filePath, Bom.join(change.newContent, change.bom))
             updates.push({ file: change.filePath, event: "change" })
             break
 
           case "move":
             if (change.movePath) {
-              // Create parent directories (recursive: true is safe on existing/root dirs)
-
-              yield* afs.writeWithDirs(change.movePath!, Bom.join(change.newContent, change.bom))
-              yield* afs.remove(change.filePath)
               updates.push({ file: change.filePath, event: "unlink" })
               updates.push({ file: change.movePath, event: "add" })
             }
             break
 
           case "delete":
-            yield* afs.remove(change.filePath)
             updates.push({ file: change.filePath, event: "unlink" })
             break
         }

@@ -1,4 +1,7 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import { Effect, Layer } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -55,6 +58,35 @@ const itWithInstructions = testEffect(
 )
 
 describe("SystemContextBuiltIns", () => {
+  test("disabled optional integrations support initialization, replacement, and transitions", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "optional-context-"))
+    try {
+      const child = Bun.spawn([process.execPath, path.join(import.meta.dir, "../fixtures/optional-context.ts")], {
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: directory,
+          XDG_DATA_HOME: directory,
+          XDG_CACHE_HOME: directory,
+          XDG_STATE_HOME: directory,
+          OPENCODE_TEST_HOME: directory,
+          OPENCODE_CONFIG_CONTENT: "{}",
+          OPENCODE_AUTH_CONTENT: "{}",
+          OPENCODE_DISABLE_PROJECT_CONFIG: "true",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [output, error, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      expect(code, output + error).toBe(0)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 30_000)
+
   it.effect("loads location-scoped environment and host-local date context", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(timestamp)
@@ -73,7 +105,7 @@ describe("SystemContextBuiltIns", () => {
         ].join("\n"),
       )
       expect(initialized.baseline).toContain(`Today's date: ${localDate(timestamp)}`)
-      expect(initialized.baseline).toContain("project_check with operation verify")
+      expect(initialized.baseline).toContain("Choose the smallest relevant project_check operation")
     }),
   )
 

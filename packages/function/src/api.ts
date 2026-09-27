@@ -5,7 +5,7 @@ import { jwtVerify, createRemoteJWKSet } from "jose"
 import { createAppAuth } from "@octokit/auth-app"
 import { Octokit } from "@octokit/rest"
 import { Resource } from "sst"
-import { parseRepositoryClaim } from "./github"
+import { installationTokenOptions, parseRepositoryClaim } from "./github"
 
 type Env = {
   SYNC_SERVER: DurableObjectNamespace<SyncServer>
@@ -67,14 +67,12 @@ export class SyncServer extends DurableObject<Env> {
   }
 
   public async share(sessionID: string) {
-    let secret = await this.getSecret()
-    if (secret) return secret
-    secret = randomUUID()
-
-    await this.ctx.storage.put("secret", secret)
-    await this.ctx.storage.put("sessionID", sessionID)
-
-    return secret
+    return this.ctx.storage.transaction(async (tx) => {
+      if (await tx.get<string>("secret")) return
+      const secret = randomUUID()
+      await tx.put({ secret, sessionID })
+      return secret
+    })
   }
 
   public async getData() {
@@ -85,7 +83,7 @@ export class SyncServer extends DurableObject<Env> {
   }
 
   public async assertSecret(secret: string) {
-    if (secret !== (await this.getSecret())) throw new Error("Invalid secret")
+    if (typeof secret !== "string" || !secret || secret !== (await this.getSecret())) throw new Error("Invalid secret")
   }
 
   private async getSecret() {
@@ -119,10 +117,12 @@ export default new Hono<{ Bindings: Env }>()
   .post("/share_create", async (c) => {
     const body = await c.req.json<{ sessionID: string }>()
     const sessionID = body.sessionID
+    if (typeof sessionID !== "string" || sessionID.length < 8) return c.json({ error: "Invalid session ID" }, 400)
     const short = SyncServer.shortName(sessionID)
     const id = c.env.SYNC_SERVER.idFromName(short)
     const stub = c.env.SYNC_SERVER.get(id)
     const secret = await stub.share(sessionID)
+    if (!secret) return c.json({ error: "Share already exists" }, 409)
     return c.json({
       secret,
       url: `https://${c.env.WEB_DOMAIN}/s/${short}`,
@@ -293,10 +293,7 @@ export default new Hono<{ Bindings: Env }>()
         owner: repository.owner,
         repo: repository.repo,
       })
-      const installationAuth = await auth({
-        type: "installation",
-        installationId: installation.id,
-      })
+      const installationAuth = await auth(installationTokenOptions(installation.id, repository.id))
       return c.json({ token: installationAuth.token })
     } catch (error) {
       console.error("GitHub App token exchange failed:", error)
@@ -341,10 +338,7 @@ export default new Hono<{ Bindings: Env }>()
       })
 
       // Get installation token
-      const installationAuth = await auth({
-        type: "installation",
-        installationId: installation.id,
-      })
+      const installationAuth = await auth(installationTokenOptions(installation.id, repoData.id))
 
       return c.json({ token: installationAuth.token })
     } catch (e: any) {

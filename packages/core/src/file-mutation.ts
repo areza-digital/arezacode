@@ -28,19 +28,32 @@ export interface ConditionalWriteInput extends WriteInput {
   readonly expected: Uint8Array
 }
 
+export interface ConditionalMutationInput {
+  readonly target: Target
+  readonly expected: Uint8Array | undefined
+  readonly content?: string | Uint8Array
+  readonly sessionID?: string
+}
+
 export interface RemoveInput {
   readonly target: Target
 }
 
 export class StaleContentError extends Schema.TaggedErrorClass<StaleContentError>()("FileMutation.StaleContentError", {
   path: Schema.String,
-}) {}
+}) {
+  override get message() {
+    return `File changed before the mutation could be committed: ${this.path}. Read it again before editing.`
+  }
+}
 
 export class TargetExistsError extends Schema.TaggedErrorClass<TargetExistsError>()("FileMutation.TargetExistsError", {
   path: Schema.String,
 }) {}
 
-export class ReuseError extends Schema.TaggedErrorClass<ReuseError>()("FileMutation.ReuseError", { message: Schema.String }) {}
+export class ReuseError extends Schema.TaggedErrorClass<ReuseError>()("FileMutation.ReuseError", {
+  message: Schema.String,
+}) {}
 
 export interface WriteResult {
   readonly operation: "write"
@@ -66,6 +79,9 @@ export interface Interface {
   readonly writeIfUnchanged: (
     input: ConditionalWriteInput,
   ) => Effect.Effect<WriteResult, StaleContentError | ReuseError | FSUtil.Error>
+  readonly applyIfUnchanged: (
+    input: ReadonlyArray<ConditionalMutationInput>,
+  ) => Effect.Effect<void, StaleContentError | ReuseError | FSUtil.Error>
   readonly remove: (input: RemoveInput) => Effect.Effect<RemoveResult, FSUtil.Error>
 }
 
@@ -80,10 +96,20 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
-    const guard = (input: WriteInput, before: string) => input.sessionID ? Effect.tryPromise({
-      try: () => AutomaticChecks.guardReuse(input.sessionID!, input.target.canonical, before, typeof input.content === "string" ? input.content : new TextDecoder().decode(input.content)),
-      catch: (error) => new ReuseError({ message: error instanceof Error ? error.message : "Reuse check failed" }),
-    }) : Effect.void
+    const guard = (input: WriteInput, before: string) =>
+      input.sessionID
+        ? Effect.tryPromise({
+            try: () =>
+              AutomaticChecks.guardReuse(
+                input.sessionID!,
+                input.target.canonical,
+                before,
+                typeof input.content === "string" ? input.content : new TextDecoder().decode(input.content),
+              ),
+            catch: (error) =>
+              new ReuseError({ message: error instanceof Error ? error.message : "Reuse check failed" }),
+          })
+        : Effect.void
     const locks = KeyedMutex.makeUnsafe<string>()
     const withTargetLock =
       (target: Target) =>
@@ -153,20 +179,58 @@ const layer = Layer.effect(
       ),
     )
 
-    const writeIfUnchanged = Effect.fn("FileMutation.writeIfUnchanged")((input: ConditionalWriteInput) =>
-      withTargetLock(input.target)(
-        Effect.gen(function* () {
-          const current = yield* fs.readFile(input.target.canonical)
-          if (!sameBytes(current, input.expected)) {
-            return yield* new StaleContentError({ path: input.target.canonical })
+    const assertUnchanged = Effect.fn("FileMutation.assertUnchanged")(function* (input: ConditionalMutationInput) {
+      const current = yield* fs
+        .readFile(input.target.canonical)
+        .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(undefined)))
+      if (
+        current === undefined
+          ? input.expected !== undefined
+          : input.expected === undefined || !sameBytes(current, input.expected)
+      ) {
+        return yield* new StaleContentError({ path: input.target.canonical })
+      }
+    })
+
+    const applyIfUnchanged = Effect.fn("FileMutation.applyIfUnchanged")((
+      input: ReadonlyArray<ConditionalMutationInput>,
+    ) => {
+      const commit = Effect.gen(function* () {
+        yield* Effect.forEach(input, assertUnchanged, { discard: true })
+        for (const change of input) {
+          if (change.content !== undefined) {
+            yield* guard(
+              { ...change, content: change.content },
+              change.expected ? new TextDecoder().decode(change.expected) : "",
+            )
           }
-          yield* guard(input, new TextDecoder().decode(current))
-          yield* typeof input.content === "string"
-            ? fs.writeFileString(input.target.canonical, input.content)
-            : fs.writeFile(input.target.canonical, input.content)
-          return writeResult(input.target, true)
-        }),
-      ),
+        }
+        yield* Effect.forEach(input, assertUnchanged, { discard: true })
+        for (const change of input) {
+          if (change.content === undefined) {
+            yield* fs.remove(change.target.canonical)
+            continue
+          }
+          if (change.expected === undefined) yield* fs.ensureDir(dirname(change.target.canonical))
+          const options = change.expected === undefined ? { flag: "wx" as const } : undefined
+          yield* (
+            typeof change.content === "string"
+              ? fs.writeFileString(change.target.canonical, change.content, options)
+              : fs.writeFile(change.target.canonical, change.content, options)
+          ).pipe(
+            Effect.catchReason("PlatformError", "AlreadyExists", () =>
+              Effect.fail(new StaleContentError({ path: change.target.canonical })),
+            ),
+          )
+        }
+      })
+      return [...new Set(input.map((change) => change.target.canonical))]
+        .sort()
+        .reduceRight((effect, canonical) => locks.withLock(canonical)(effect), Effect.uninterruptible(commit))
+    })
+
+    const writeIfUnchanged = Effect.fn("FileMutation.writeIfUnchanged")((input: ConditionalWriteInput) =>
+      applyIfUnchanged([input]).pipe(Effect.as(writeResult(input.target, true))),
     )
 
     const remove = Effect.fn("FileMutation.remove")((input: RemoveInput) =>
@@ -181,7 +245,7 @@ const layer = Layer.effect(
       ),
     )
 
-    return Service.of({ create, write, writeTextPreservingBom, writeIfUnchanged, remove })
+    return Service.of({ create, write, writeTextPreservingBom, writeIfUnchanged, applyIfUnchanged, remove })
   }),
 )
 

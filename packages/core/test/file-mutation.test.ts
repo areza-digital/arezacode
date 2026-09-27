@@ -34,6 +34,48 @@ function withTmp<A, E, R>(f: (directory: string) => Effect.Effect<A, E, R>) {
 }
 
 describe("FileMutation", () => {
+  it.live("rejects prohibited UI copy before changing files through every write path", () =>
+    withTmp((directory) =>
+      Effect.gen(function* () {
+        const mutation = yield* LocationMutation.Service
+        const files = yield* FileMutation.Service
+        const target = yield* mutation.resolve({ path: "card.tsx" })
+        const fresh = yield* mutation.resolve({ path: "new-card.tsx" })
+        const before = "export const Card = () => <p>Ready</p>"
+        const content = "export const Card = () => <p>Ready · Today</p>"
+        yield* Effect.promise(() => fs.writeFile(target.canonical, before))
+        expect(yield* files.write({ target, content, sessionID: "ui-copy-test" }).pipe(Effect.flip)).toBeInstanceOf(
+          FileMutation.ReuseError,
+        )
+        expect(
+          yield* files.writeTextPreservingBom({ target, content, sessionID: "ui-copy-test" }).pipe(Effect.flip),
+        ).toBeInstanceOf(FileMutation.ReuseError)
+        expect(
+          yield* files
+            .writeIfUnchanged({
+              target,
+              content,
+              expected: new TextEncoder().encode(before),
+              sessionID: "ui-copy-test",
+            })
+            .pipe(Effect.flip),
+        ).toBeInstanceOf(FileMutation.ReuseError)
+        expect(
+          yield* files.create({ target: fresh, content, sessionID: "ui-copy-test" }).pipe(Effect.flip),
+        ).toBeInstanceOf(FileMutation.ReuseError)
+        expect(yield* Effect.promise(() => fs.readFile(target.canonical, "utf8"))).toBe(before)
+        expect(
+          yield* Effect.promise(() =>
+            fs.stat(fresh.canonical).then(
+              () => true,
+              () => false,
+            ),
+          ),
+        ).toBe(false)
+      }).pipe(provide(directory)),
+    ),
+  )
+
   it.live("writes an existing internal file and returns a stable result", () =>
     withTmp((directory) =>
       Effect.gen(function* () {
@@ -311,6 +353,86 @@ describe("FileMutation", () => {
         ).toMatchObject({ _tag: "FileMutation.StaleContentError", path: target.canonical })
         expect(yield* Effect.promise(() => fs.readFile(targetPath, "utf8"))).toBe("current")
       }).pipe(provide(directory)),
+    ),
+  )
+
+  it.live("rechecks expected bytes after the initial comparison before committing", () =>
+    withTmp((directory) => {
+      let reads = 0
+      const filesystem = Layer.effect(
+        FSUtil.Service,
+        Effect.gen(function* () {
+          const fs = yield* FSUtil.Service
+          return FSUtil.Service.of({
+            ...fs,
+            readFile: (target) =>
+              fs
+                .readFile(target)
+                .pipe(Effect.tap(() => (++reads === 1 ? fs.writeFileString(target, "newer") : Effect.void))),
+          })
+        }),
+      ).pipe(Layer.provide(LayerNode.compile(FSUtil.node)))
+      return Effect.gen(function* () {
+        const mutation = yield* LocationMutation.Service
+        const files = yield* FileMutation.Service
+        const target = yield* mutation.resolve({ path: "recheck.txt" })
+        yield* Effect.promise(() => fs.writeFile(target.canonical, "before"))
+        expect(
+          yield* files
+            .writeIfUnchanged({ target, expected: new TextEncoder().encode("before"), content: "after" })
+            .pipe(Effect.flip),
+        ).toBeInstanceOf(FileMutation.StaleContentError)
+        expect(yield* Effect.promise(() => fs.readFile(target.canonical, "utf8"))).toBe("newer")
+      }).pipe(provide(directory, filesystem))
+    }),
+  )
+
+  it.live("serializes batch and single-file conditional writes on their shared targets", () =>
+    withTmp((directory) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        let writes = 0
+        const filesystem = instrumentWrites((write) =>
+          Effect.gen(function* () {
+            if (++writes === 1) {
+              yield* Deferred.succeed(started, undefined)
+              yield* Deferred.await(release)
+            }
+            yield* write
+          }),
+        )
+        yield* Effect.gen(function* () {
+          const mutation = yield* LocationMutation.Service
+          const files = yield* FileMutation.Service
+          const source = yield* mutation.resolve({ path: "source.txt" })
+          const destination = yield* mutation.resolve({ path: "destination.txt" })
+          yield* Effect.promise(() => fs.writeFile(source.canonical, "before"))
+          const expected = new TextEncoder().encode("before")
+          const batch = yield* files
+            .applyIfUnchanged([
+              { target: destination, expected: undefined, content: "moved" },
+              { target: source, expected },
+            ])
+            .pipe(Effect.forkChild)
+          yield* Deferred.await(started)
+          const edit = yield* files
+            .writeIfUnchanged({ target: source, expected, content: "edit" })
+            .pipe(Effect.flip, Effect.forkChild)
+          yield* Deferred.succeed(release, undefined)
+          yield* Fiber.join(batch)
+          expect(yield* Fiber.join(edit)).toBeInstanceOf(FileMutation.StaleContentError)
+          expect(yield* Effect.promise(() => fs.readFile(destination.canonical, "utf8"))).toBe("moved")
+          expect(
+            yield* Effect.promise(() =>
+              fs.stat(source.canonical).then(
+                () => true,
+                () => false,
+              ),
+            ),
+          ).toBe(false)
+        }).pipe(provide(directory, filesystem))
+      }),
     ),
   )
 

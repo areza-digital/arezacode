@@ -7,6 +7,7 @@ import { EditTool } from "../../src/tool/edit"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { LSP } from "@/lsp/lsp"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { FileMutation } from "@opencode-ai/core/file-mutation"
 import { Format } from "../../src/format"
 import { Agent } from "../../src/agent/agent"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
@@ -32,7 +33,15 @@ afterEach(async () => {
 })
 
 const layer = LayerNode.compile(
-  LayerNode.group([LSP.node, FSUtil.node, Format.node, EventV2Bridge.node, Truncate.node, Agent.node]),
+  LayerNode.group([
+    LSP.node,
+    FSUtil.node,
+    FileMutation.node,
+    Format.node,
+    EventV2Bridge.node,
+    Truncate.node,
+    Agent.node,
+  ]),
 )
 
 const it = testEffect(layer)
@@ -526,6 +535,38 @@ describe("tool.edit", () => {
   })
 
   describe("concurrent editing", () => {
+    it.instance("preserves external changes made while edit approval is pending", () =>
+      Effect.gen(function* () {
+        const filepath = path.join((yield* TestInstance).directory, "stale.txt")
+        yield* put(filepath, "old\nkeep\n")
+        const exit = yield* run(
+          { filePath: filepath, oldString: "old", newString: "replacement" },
+          {
+            ...ctx,
+            ask: () => Effect.promise(() => fs.writeFile(filepath, "old\nnewer\n")),
+          },
+        ).pipe(Effect.exit)
+        expect(Exit.isFailure(exit)).toBe(true)
+        if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("File changed before the mutation")
+        expect(yield* load(filepath)).toBe("old\nnewer\n")
+      }),
+    )
+
+    it.instance("does not replace a file created while empty-oldString approval is pending", () =>
+      Effect.gen(function* () {
+        const filepath = path.join((yield* TestInstance).directory, "appeared.txt")
+        const exit = yield* run(
+          { filePath: filepath, oldString: "", newString: "replacement" },
+          {
+            ...ctx,
+            ask: () => Effect.promise(() => fs.writeFile(filepath, "winner")),
+          },
+        ).pipe(Effect.exit)
+        expect(Exit.isFailure(exit)).toBe(true)
+        expect(yield* load(filepath)).toBe("winner")
+      }),
+    )
+
     it.instance("preserves concurrent edits to different sections of the same file", () =>
       Effect.gen(function* () {
         const test = yield* TestInstance

@@ -63,7 +63,11 @@ jobs:
             turbo-${{ runner.os }}-${{ hashFiles('turbo.json', '**/package.json') }}-
             turbo-${{ runner.os }}-
 
-      - name: Run unit tests
+      - name: Report unit coverage boundaries
+        run: >-
+          bun -e 'console.log("Bun unit coverage excludes desktop draft-store.test.ts (node:sqlite unavailable), desktop service/browser integration, SDK Next embedded provider execution, and enterprise configured-storage integration. Browser e2e runs in the separate e2e job; native/service/provider/storage exclusions are not covered by that job.")'
+
+      - name: Run Bun-compatible unit tests
         timeout-minutes: 20
         run: GITHUB_ACTIONS=false bun turbo test
         env:

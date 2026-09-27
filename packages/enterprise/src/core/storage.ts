@@ -45,20 +45,22 @@ export namespace Storage {
           const afterPath = prefix + options.after + ".json"
           params.set("start-after", afterPath)
         }
-        const response = await client.fetch(`${base}?${params}`)
-        if (!response.ok) throw new Error(`Failed to list ${prefix}: ${response.status}`)
-        const xml = await response.text()
         const keys: string[] = []
-        const regex = /<Key>([^<]+)<\/Key>/g
-        let match
-        while ((match = regex.exec(xml)) !== null) {
-          keys.push(match[1])
+        while (true) {
+          const response = await client.fetch(`${base}?${params}`)
+          if (!response.ok) throw new Error(`Failed to list ${prefix}: ${response.status}`)
+          const xml = await response.text()
+          keys.push(...Array.from(xml.matchAll(/<Key>([^<]+)<\/Key>/g), (match) => match[1]))
+          if (options?.limit && keys.length >= options.limit) break
+          const next = /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(xml)?.[1]
+          if (!next) break
+          params.set("continuation-token", next)
         }
         if (options?.before) {
           const beforePath = prefix + options.before + ".json"
           return keys.filter((key) => key < beforePath)
         }
-        return keys
+        return options?.limit ? keys.slice(0, options.limit) : keys
       },
     }
   }

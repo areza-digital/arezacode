@@ -25,6 +25,7 @@ import { createPromptSubmissionState } from "./submission-state"
 import { normalizeSessionInfo } from "@/utils/session"
 import { Event } from "@opencode-ai/schema/event"
 import { blobDataUrl } from "@/utils/draft-store"
+import { createPromptSession } from "@/context/prompt-state"
 import type { createJevClient } from "@/utils/jev"
 
 type PendingPrompt = {
@@ -442,10 +443,10 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
   }
 
-  const seed = (dir: string, info: Session) => {
-    serverSync().session.remember(info)
-    serverSync().homeSessions.apply({ type: "session.created", properties: { sessionID: info.id, info } })
-    const [, setStore] = serverSync().child(dir)
+  const seed = (owner: ServerSync, dir: string, info: Session) => {
+    owner.session.remember(info)
+    owner.homeSessions.apply({ type: "session.created", properties: { sessionID: info.id, info } })
+    const [, setStore] = owner.child(dir)
     setStore("session", (list: Session[]) => {
       const result = Binary.search(list, info.id, (item) => item.id)
       const next = [...list]
@@ -458,10 +459,34 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     })
   }
 
+  const submitting = new WeakSet<ReturnType<typeof prompt.capture>>()
   const handleSubmit = async (event: Event) => {
     event.preventDefault()
-
     const target = prompt.capture()
+    if (submitting.has(target)) return
+    submitting.add(target)
+    return submit(event, sdk(), sync(), serverSDK(), serverSync()).finally(() => submitting.delete(target))
+  }
+  const currentSDK = sdk
+
+  const submit = async (
+    event: Event,
+    origin: DirectorySDK,
+    originSync: DirectorySync,
+    originServer: ReturnType<ReturnType<typeof useServerSDK>>,
+    originServerSync: ServerSync,
+  ) => {
+    event.preventDefault()
+
+    const sdk = () => origin
+    const sync = () => originSync
+    const serverSDK = () => originServer
+    const serverSync = () => originServerSync
+    const pendingKey = (sessionID: string) => ScopedKey.from(origin.scope, sessionID)
+    const draftID = search.draftId
+    const draftServer = draftID ? tabs.draft(draftID).server : ServerConnection.key(originServer.server)
+    const target = prompt.capture()
+    const active = () => currentSDK() === origin && prompt.capture() === target && search.draftId === draftID
     const submission = createPromptSubmissionState({
       target,
       prompt: target.current(),
@@ -492,9 +517,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       }
       if (
         params.id !== sessionID ||
-        sdk() !== origin ||
+        currentSDK() !== origin ||
         !submission.current(prompt.capture()) ||
-        target.current() !== currentPrompt
+        !submission.unchanged()
       )
         return
     }
@@ -521,9 +546,12 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const isNewSession = !params.id
     const shouldAutoAccept = isNewSession && (!approvalMode || approvalMode === "default") && input.autoAccept()
     const worktreeSelection = input.newSessionWorktree?.() || "main"
+    const browserVerification = input.browserVerification?.() ?? false
+    const auto = modelSelection.auto?.() ?? false
 
     let sessionDirectory = projectDirectory
     let client = sdk().client
+    let session = input.info()
 
     if (isNewSession) {
       if (worktreeSelection === "create") {
@@ -561,10 +589,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         serverSync().child(sessionDirectory)
       }
 
-      input.onNewSessionWorktreeReset?.()
+      if (active()) input.onNewSessionWorktreeReset?.()
     }
 
-    let session = input.info()
     if (!session && isNewSession) {
       const created = await sdk()
         .api.session.create({
@@ -584,25 +611,36 @@ export function createPromptSubmit(input: PromptSubmitInput) {
           return undefined
         })
       if (created) {
-        seed(sessionDirectory, created)
+        seed(originServerSync, sessionDirectory, created)
         session = created
         await startTransition(() => {
           if (!session) return
           if (shouldAutoAccept) permissionState.enableAutoAccept(session.id, sessionDirectory)
-          local.session.promote(sessionDirectory, session.id, {
-            agent: currentAgent.name,
-            model: {
-              providerID: currentModel.provider.id,
-              modelID: currentModel.id,
-              auto: modelSelection.auto?.() ?? false,
-            },
-            variant: variant ?? null,
-          })
-          layout.handoff.setTabs(base64Encode(sessionDirectory), session.id)
-          const draftID = search.draftId
-          if (draftID) tabs.promoteDraft(draftID, { server: tabs.draft(draftID).server, sessionId: session.id })
-          else navigate(`/${base64Encode(sessionDirectory)}/session/${session.id}`)
+          if (!submission.unchanged()) return
+          if (active())
+            local.session.promote(sessionDirectory, session.id, {
+              agent: currentAgent.name,
+              model: {
+                providerID: currentModel.provider.id,
+                modelID: currentModel.id,
+                auto,
+              },
+              variant: variant ?? null,
+            })
+          if (active()) layout.handoff.setTabs(base64Encode(sessionDirectory), session.id)
+          if (draftID) {
+            const next = { type: "session" as const, server: draftServer, sessionId: session.id }
+            submission.retarget(
+              tabs.state(next, "prompt", () =>
+                createPromptSession(origin.scope, { dir: base64Encode(sessionDirectory), id: next.sessionId }),
+              ),
+            )
+            tabs.promoteDraft(draftID, { server: draftServer, sessionId: session.id })
+            return
+          }
+          if (!active()) return
           submission.retarget(prompt.capture({ dir: base64Encode(sessionDirectory), id: session.id }))
+          navigate(`/${base64Encode(sessionDirectory)}/session/${session.id}`)
         })
       }
     }
@@ -630,13 +668,13 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       agent,
       model,
       variant,
-      browserVerification: input.browserVerification?.() ?? false,
+      browserVerification,
       independent,
       project: project
         ? { name: project.name || project.worktree, folders: [...(project.folders ?? [project.worktree])] }
         : null,
       jev: {
-        auto: modelSelection.auto?.() ?? false,
+        auto,
         models: sdk().jev?.state.enabled
           ? modelSelection
               .list()
@@ -654,9 +692,12 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
 
     const clearInput = () => {
-      submission.clear()
-      input.setMode("normal")
-      input.setPopover(null)
+      const cleared = submission.clear()
+      if (cleared && submission.current(prompt.capture())) {
+        input.setMode("normal")
+        input.setPopover(null)
+      }
+      return cleared
     }
 
     const restoreInput = () => {
@@ -683,15 +724,15 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     ) {
       if (!input.onQueue) return
       input.onQueue?.(draft)
-      clearContext(submission.target())
-      clearInput()
+      if (clearInput()) clearContext(submission.target())
       return
     }
 
-    input.onSubmit?.()
+    const notify = submission.current(prompt.capture()) && submission.unchanged()
 
     if (mode === "shell") {
       clearInput()
+      if (notify) input.onSubmit?.()
       const eventID = Event.ID.create()
       sdk()
         .api.session.shell({
@@ -722,8 +763,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       })
     }
 
-    for (const item of commentItems) submission.target().context.remove(item.key)
-    clearInput()
+    if (clearInput()) for (const item of commentItems) submission.target().context.remove(item.key)
+    if (notify) input.onSubmit?.()
 
     const waitForWorktree = async () => {
       const worktree = WorktreeState.get(sdk().scope, sessionDirectory)

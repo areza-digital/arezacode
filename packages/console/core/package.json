@@ -23,6 +23,7 @@
     "./*": "./src/*"
   },
   "scripts": {
+    "test": "bun --no-env-file test ./test --only-failures",
     "db": "sst shell drizzle-kit",
     "db-dev": "sst shell --stage dev -- drizzle-kit",
     "db-prod": "sst shell --stage production -- drizzle-kit",

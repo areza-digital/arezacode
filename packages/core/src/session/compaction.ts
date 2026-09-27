@@ -84,6 +84,7 @@ type Input = {
   readonly entries: readonly Entry[]
   readonly model: Model
   readonly request: LLMRequest
+  readonly prices?: readonly (typeof ModelV2.Cost.Type)[]
 }
 
 const estimate = (value: unknown) => Token.estimate(JSON.stringify(value))
@@ -187,6 +188,7 @@ export const buildPrompt = (input: { readonly previousSummary?: string; readonly
 export const make = (dependencies: Dependencies) => {
   const config = settings(dependencies.config)
   const compactAfterOverflow = Effect.fn("SessionCompaction.compactAfterOverflow")(function* (input: Input) {
+    if (!config.auto) return false
     const context = input.model.route.defaults.limits?.context
     if (context === undefined || context <= 0) return false
     const output = input.request.generation?.maxTokens ?? input.model.route.defaults.limits?.output ?? 0
@@ -252,7 +254,7 @@ export const make = (dependencies: Dependencies) => {
               model: { providerID: ProviderV2.ID.make(input.model.provider), id: ModelV2.ID.make(input.model.id) },
               timestamp: yield* DateTime.now,
               startedAt,
-              usage: accountUsage(usage),
+              usage: accountUsage(usage, { prices: input.prices }),
               tokens: usageTokens(usage),
               finish: failed && finish === "stop" ? "incomplete" : finish,
             })

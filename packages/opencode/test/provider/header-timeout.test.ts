@@ -1,6 +1,6 @@
 import { afterEach, expect } from "bun:test"
 import { createServer, type Server } from "node:http"
-import { streamText } from "ai"
+import { APICallError, streamText } from "ai"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Effect } from "effect"
@@ -116,7 +116,9 @@ it.live("configured chunkTimeout raises a retryable response stream error when S
               return error
             }
           })
-          expect(error).toBeInstanceOf(ProviderError.ResponseStreamError)
+          expect(APICallError.isInstance(error)).toBe(true)
+          if (!APICallError.isInstance(error)) throw error
+          expect(error.cause).toBeInstanceOf(ProviderError.ResponseStreamError)
           expect(
             SessionRetry.retryable(MessageV2.fromError(error, { providerID: model.providerID }), model.providerID),
           ).toEqual({ message: "SSE read timed out" })

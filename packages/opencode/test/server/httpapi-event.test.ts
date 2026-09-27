@@ -1,5 +1,10 @@
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer, Queue, Schema, Stream } from "effect"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { EventV2 } from "@opencode-ai/core/event"
+import { FileSystem } from "@opencode-ai/schema/filesystem"
+import { SessionV1 } from "@opencode-ai/schema/v1/session"
+import { Sse } from "effect/unstable/encoding"
 import { EventPaths } from "../../src/server/routes/instance/httpapi/groups/event"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
@@ -39,9 +44,43 @@ afterEach(async () => {
   await resetDatabase()
 })
 
-const it = testEffect(httpApiLayer)
+const it = testEffect(Layer.mergeAll(LayerNode.compile(EventV2.node), httpApiLayer))
 
 describe("event HttpApi", () => {
+  it.instance(
+    "current event stream ignores legacy deltas and continues delivering public events",
+    () =>
+      Effect.gen(function* () {
+        const { directory } = yield* TestInstance
+        const events = yield* EventV2.Service
+        const response = yield* requestInDirectory("/api/event", directory)
+        const reader = yield* Queue.unbounded<string>()
+        yield* response.stream.pipe(
+          Stream.decodeText,
+          Stream.pipeThroughChannel(Sse.decode()),
+          Stream.runForEach((event) => Queue.offer(reader, event.data)),
+          Effect.forkScoped,
+        )
+        const next = Queue.take(reader).pipe(
+          Effect.timeout("5 seconds"),
+          Effect.map((value) => JSON.parse(value)),
+        )
+        expect(yield* next).toMatchObject({ type: "server.connected" })
+        yield* events.publish(SessionV1.Event.PartDelta, {
+          sessionID: SessionV1.SessionInfo.fields.id.make("ses_event"),
+          messageID: SessionV1.MessageID.make("msg_event"),
+          partID: SessionV1.PartID.make("prt_event"),
+          field: "text",
+          delta: "ignored",
+        })
+        yield* events.publish(FileSystem.Event.Edited, { file: "first.txt" })
+        yield* events.publish(FileSystem.Event.Edited, { file: "second.txt" })
+        expect(yield* next).toMatchObject({ type: "file.edited", data: { file: "first.txt" } })
+        expect(yield* next).toMatchObject({ type: "file.edited", data: { file: "second.txt" } })
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
   it.instance(
     "serves event stream",
     () =>

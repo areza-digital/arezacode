@@ -22,7 +22,8 @@ export const Input = Schema.Struct({
     description: "Relative directory to search. Defaults to the active Location.",
   }),
   limit: FileSystem.GlobInput.fields.limit.annotate({
-    description: "Maximum results to return",
+    description:
+      "Maximum results to return. Defaults to 100 and is capped at 1000. Narrow the pattern or path for more results.",
   }),
 })
 
@@ -30,8 +31,10 @@ export const Output = Schema.Array(FileSystem.Entry)
 type ModelOutput = typeof Output.Encoded
 
 /** Format raw search results into the concise line-oriented output models expect. */
-export const toModelOutput = (output: ModelOutput) => {
+export const toModelOutput = (output: ModelOutput, limit?: number) => {
   const lines = output.length === 0 ? ["No files found"] : output.map((item) => item.path)
+  if (limit !== undefined && output.length >= limit)
+    lines.push(`Result limit reached (${limit}). More files may exist; narrow the pattern or path.`)
   return lines.join("\n")
 }
 
@@ -51,11 +54,12 @@ const layer = Layer.effectDiscard(
             "Find files by glob pattern within the active Location. Returns concise relative file resources. Use a relative path to narrow the search and limit to bound the result count.",
           input: Input,
           output: Output,
-          toModelOutput: ({ output }) => [
+          toModelOutput: ({ input, output }) => [
             {
               type: "text",
               text: toModelOutput(
                 output.map((entry) => ({ ...entry, path: path.resolve(location.directory, entry.path) })),
+                Math.min(input.limit ?? 100, 1000),
               ),
             },
           ],
@@ -87,7 +91,7 @@ const layer = Layer.effectDiscard(
                 .glob({
                   cwd,
                   pattern: input.pattern,
-                  limit: input.limit ?? Number.MAX_SAFE_INTEGER,
+                  limit: Math.min(input.limit ?? 100, 1000),
                 })
                 .pipe(
                   Effect.map((result) =>

@@ -149,7 +149,14 @@ export const {
 
     const fullSyncedSessions = new Set<string>()
     const syncingSessions = new Map<string, Promise<void>>()
-    const hydratingSessions = new Map<string, { messages: Set<string>; parts: Set<string> }>()
+    const hydratingSessions = new Map<
+      string,
+      { messages: Set<string>; parts: Set<string>; info: boolean; todo: boolean; diff: boolean }
+    >()
+    const statusLoads = new Set<Set<string>>()
+    let connected = false
+    let reconnecting: Promise<void> | undefined
+    let reconnectGeneration = 0
     const touchMessage = (sessionID: string, messageID: string) => {
       hydratingSessions.get(sessionID)?.messages.add(messageID)
     }
@@ -175,6 +182,10 @@ export const {
 
     event.subscribe((event, { directory, workspace }) => {
       switch (event.type) {
+        case "server.connected":
+          if (connected) void reconnect().catch((error) => console.error("tui reconnect failed", error))
+          connected = true
+          break
         case "server.instance.disposed":
           void bootstrap()
           break
@@ -263,14 +274,21 @@ export const {
         }
 
         case "todo.updated":
+          if (hydratingSessions.has(event.properties.sessionID))
+            hydratingSessions.get(event.properties.sessionID)!.todo = true
           setStore("todo", event.properties.sessionID, event.properties.todos)
           break
 
         case "session.diff":
+          if (hydratingSessions.has(event.properties.sessionID))
+            hydratingSessions.get(event.properties.sessionID)!.diff = true
           setStore("session_diff", event.properties.sessionID, event.properties.diff)
           break
 
         case "session.deleted": {
+          if (hydratingSessions.has(event.properties.info.id))
+            hydratingSessions.get(event.properties.info.id)!.info = true
+          fullSyncedSessions.delete(event.properties.info.id)
           const result = search(store.session, event.properties.info.id, (s) => s.id)
           if (result.found) {
             setStore(
@@ -283,6 +301,8 @@ export const {
           break
         }
         case "session.updated": {
+          if (hydratingSessions.has(event.properties.info.id))
+            hydratingSessions.get(event.properties.info.id)!.info = true
           const result = search(store.session, event.properties.info.id, (s) => s.id)
           if (result.found) {
             setStore("session", result.index, reconcile(event.properties.info))
@@ -298,6 +318,8 @@ export const {
         }
 
         case "session.next.moved": {
+          if (hydratingSessions.has(event.properties.sessionID))
+            hydratingSessions.get(event.properties.sessionID)!.info = true
           const result = search(store.session, event.properties.sessionID, (s) => s.id)
           if (!result.found) break
           setStore(
@@ -314,6 +336,7 @@ export const {
         }
 
         case "session.status": {
+          for (const touched of statusLoads) touched.add(event.properties.sessionID)
           setStore("session_status", event.properties.sessionID, event.properties.status)
           break
         }
@@ -361,6 +384,7 @@ export const {
         case "message.removed": {
           touchMessage(event.properties.sessionID, event.properties.messageID)
           const messages = store.message[event.properties.sessionID]
+          if (!messages) break
           const index = messages.findIndex((message) => message.id === event.properties.messageID)
           if (index !== -1) {
             setStore(
@@ -417,6 +441,7 @@ export const {
         case "message.part.removed": {
           touchPart(event.properties.sessionID, event.properties.partID)
           const parts = store.part[event.properties.messageID]
+          if (!parts) break
           const result = search(parts, event.properties.partID, (part) => part.id)
           if (result.found) {
             setStore(
@@ -591,25 +616,33 @@ export const {
           if (last.role === "user") return "working"
           return last.time.completed ? "idle" : "working"
         },
-        async sync(sessionID: string) {
-          if (fullSyncedSessions.has(sessionID)) return
+        async sync(sessionID: string, options?: { force?: boolean }) {
+          if (fullSyncedSessions.has(sessionID) && !options?.force) return
           const syncing = syncingSessions.get(sessionID)
           if (syncing) return syncing
-          const tracker = { messages: new Set<string>(), parts: new Set<string>() }
+          fullSyncedSessions.delete(sessionID)
+          const tracker = {
+            messages: new Set<string>(),
+            parts: new Set<string>(),
+            info: false,
+            todo: false,
+            diff: false,
+          }
           hydratingSessions.set(sessionID, tracker)
           const task = (async () => {
             const [session, messages, todo, diff] = await Promise.all([
               sdk.client.session.get({ sessionID }, { throwOnError: true }),
-              sdk.client.session.messages({ sessionID, limit: 100 }),
-              sdk.client.session.todo({ sessionID }),
-              sdk.client.session.diff({ sessionID }),
+              sdk.client.session.messages({ sessionID, limit: 100 }, { throwOnError: true }),
+              sdk.client.session.todo({ sessionID }, { throwOnError: true }),
+              sdk.client.session.diff({ sessionID }, { throwOnError: true }),
             ])
             setStore(
               produce((draft) => {
                 const match = search(draft.session, sessionID, (s) => s.id)
-                if (match.found) draft.session[match.index] = session.data!
-                if (!match.found) draft.session.splice(match.index, 0, session.data!)
-                draft.todo[sessionID] = todo.data ?? []
+                if (tracker.info && !match.found) return
+                if (!tracker.info && match.found) draft.session[match.index] = session.data!
+                if (!tracker.info && !match.found) draft.session.splice(match.index, 0, session.data!)
+                if (!tracker.todo) draft.todo[sessionID] = todo.data ?? []
                 const currentMessages = draft.message[sessionID] ?? []
                 const infos = (messages.data ?? []).flatMap((message) => {
                   if (!tracker.messages.has(message.info.id)) return [message.info]
@@ -654,10 +687,10 @@ export const {
                 }
                 for (const message of removed) delete draft.part[message.id]
                 draft.message[sessionID] = visible
-                draft.session_diff[sessionID] = diff.data ?? []
+                if (!tracker.diff) draft.session_diff[sessionID] = diff.data ?? []
               }),
             )
-            fullSyncedSessions.add(sessionID)
+            if (result.session.get(sessionID)) fullSyncedSessions.add(sessionID)
           })().finally(() => {
             syncingSessions.delete(sessionID)
             hydratingSessions.delete(sessionID)
@@ -667,7 +700,53 @@ export const {
         },
       },
       bootstrap,
+      reconnect,
     }
     return result
+
+    function reconnect(): Promise<void> {
+      reconnectGeneration++
+      if (reconnecting) return reconnecting
+      reconnecting = (async () => {
+        let generation: number
+        do {
+          generation = reconnectGeneration
+          const touched = new Set<string>()
+          statusLoads.add(touched)
+          try {
+            const snapshot = await sdk.client.session.status(undefined, { throwOnError: true })
+            const targets = new Set([
+              ...fullSyncedSessions,
+              ...syncingSessions.keys(),
+              ...Object.keys(store.message),
+              ...Object.entries(store.session_status)
+                .filter(([, status]) => status.type !== "idle")
+                .map(([id]) => id),
+              ...Object.entries(snapshot.data ?? {})
+                .filter(([, status]) => status.type !== "idle")
+                .map(([id]) => id),
+            ])
+            fullSyncedSessions.clear()
+            const results = await Promise.allSettled(
+              [...targets].map(async (sessionID) => {
+                await syncingSessions.get(sessionID)?.catch(() => undefined)
+                await result.session.sync(sessionID, { force: true })
+                if (!touched.has(sessionID))
+                  setStore("session_status", sessionID, snapshot.data?.[sessionID] ?? { type: "idle" })
+              }),
+            )
+            const failed = results.find((item) => item.status === "rejected")
+            if (failed?.status === "rejected") throw failed.reason
+          } catch (error) {
+            if (generation === reconnectGeneration) throw error
+          } finally {
+            statusLoads.delete(touched)
+          }
+        } while (generation !== reconnectGeneration)
+      })().finally(() => {
+        reconnecting = undefined
+      })
+      return reconnecting
+    }
   },
 })

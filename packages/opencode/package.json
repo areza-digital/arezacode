@@ -7,7 +7,7 @@
   "private": true,
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "test": "bun test --timeout 30000 --only-failures",
+    "test": "RECORD=false bun test --timeout 30000 --only-failures --path-ignore-patterns '**/httpapi-mdns.test.ts' && RECORD=false bun test --timeout 30000 --only-failures ./test/server/httpapi-mdns.test.ts",
     "test:httpapi": "bun run script/httpapi-exercise.ts --mode coverage --fail-on-missing --fail-on-skip && bun run script/httpapi-exercise.ts --mode auth --fail-on-missing --fail-on-skip && bun run script/httpapi-exercise.ts --mode effect --fail-on-missing --fail-on-skip",
     "bench:test": "bun run script/bench-test-suite.ts",
     "profile:test": "bun run script/profile-test-files.ts",
@@ -129,7 +129,7 @@
     "immer": "11.1.4",
     "jsonc-parser": "3.3.1",
     "mime-types": "3.0.2",
-    "minimatch": "10.0.3",
+    "minimatch": "10.2.5",
     "npm-package-arg": "13.0.2",
     "open": "10.1.2",
     "opencode-gitlab-auth": "2.1.0",

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer } from "effect"
+import { Cause, Effect, Exit, Layer } from "effect"
 import path from "path"
 import fs from "fs/promises"
 import { WriteTool } from "../../src/tool/write"
 import { LSP } from "@/lsp/lsp"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { FileMutation } from "@opencode-ai/core/file-mutation"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { Format } from "../../src/format"
 import { Truncate } from "@/tool/truncate"
@@ -36,6 +37,7 @@ const it = testEffect(
     LayerNode.group([
       LSP.node,
       FSUtil.node,
+      FileMutation.node,
       EventV2Bridge.node,
       Format.node,
       CrossSpawnSpawner.node,
@@ -59,6 +61,25 @@ const run = Effect.fn("WriteToolTest.run")(function* (
 })
 
 describe("tool.write", () => {
+  for (const exists of [false, true]) {
+    it.instance(`preserves ${exists ? "changed" : "newly created"} content while write approval is pending`, () =>
+      Effect.gen(function* () {
+        const filepath = path.join((yield* TestInstance).directory, "stale.txt")
+        if (exists) yield* Effect.promise(() => fs.writeFile(filepath, "old"))
+        const exit = yield* run(
+          { filePath: filepath, content: "replacement" },
+          {
+            ...ctx,
+            ask: () => Effect.promise(() => fs.writeFile(filepath, "winner")),
+          },
+        ).pipe(Effect.exit)
+        expect(Exit.isFailure(exit)).toBe(true)
+        if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("File changed before the mutation")
+        expect(yield* Effect.promise(() => fs.readFile(filepath, "utf8"))).toBe("winner")
+      }),
+    )
+  }
+
   describe("new file creation", () => {
     it.instance("writes content to new file", () =>
       Effect.gen(function* () {

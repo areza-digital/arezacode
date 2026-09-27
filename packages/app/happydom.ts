@@ -1,6 +1,20 @@
-import { GlobalRegistrator } from "@happy-dom/global-registrator"
+import { JSDOM } from "jsdom"
 
-GlobalRegistrator.register()
+if (process.env.OPENCODE_TEST_DOM === "happy-dom") {
+  const { GlobalRegistrator } = await import("@happy-dom/global-registrator")
+  GlobalRegistrator.register()
+}
+if (process.env.OPENCODE_TEST_DOM !== "happy-dom") {
+  const dom = new JSDOM("", { url: "http://localhost", pretendToBeVisual: true })
+  for (const key of [...Object.getOwnPropertyNames(dom.window), "matchMedia"]) {
+    if (key in globalThis && !["Event", "CustomEvent", "EventTarget", "DOMException", "navigator"].includes(key))
+      continue
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      get: () => Reflect.get(dom.window, key),
+    })
+  }
+}
 
 const originalGetContext = HTMLCanvasElement.prototype.getContext
 // @ts-expect-error - we're overriding with a simplified mock

@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import { LLM } from "@opencode-ai/llm"
 import { LLMClient } from "@opencode-ai/llm/route"
-import { DateTime, Effect, Stream } from "effect"
+import { DateTime, Effect, Exit, Stream } from "effect"
 import { Headers } from "effect/unstable/http"
 import { Credential } from "@opencode-ai/core/credential"
 import { Integration } from "@opencode-ai/core/integration"
@@ -43,6 +43,25 @@ const model = (api: Api, variants: ModelV2.Info["variants"] = []) =>
   })
 
 describe("SessionRunnerModel", () => {
+  for (const [providerID, api, expected] of [
+    ["openai", { type: "aisdk", package: "@ai-sdk/openai" }, true],
+    ["anthropic", { type: "aisdk", package: "@ai-sdk/anthropic" }, true],
+    ["openrouter", { type: "aisdk", package: "@ai-sdk/google" }, true],
+    ["compatible", { type: "aisdk", package: "@ai-sdk/openai-compatible", url: "https://compatible.example/v1" }, true],
+    ["missing-url", { type: "aisdk", package: "@ai-sdk/openai-compatible" }, false],
+    ["empty-url", { type: "aisdk", package: "@ai-sdk/openai-compatible", url: "" }, false],
+    ["google", { type: "aisdk", package: "@ai-sdk/google" }, false],
+    ["native", { type: "native", settings: {} }, false],
+  ] as const) {
+    it.effect(`supported catalog predicate matches executable resolution for ${providerID}`, () =>
+      Effect.gen(function* () {
+        const catalog = { ...model(api), providerID: ProviderV2.ID.make(providerID) }
+        expect(SessionRunnerModel.supported(catalog)).toBe(expected)
+        expect(Exit.isSuccess(yield* SessionRunnerModel.fromCatalogModel(catalog).pipe(Effect.exit))).toBe(expected)
+      }),
+    )
+  }
+
   it.effect("maps catalog OpenAI AI SDK models into native Responses routes", () =>
     Effect.gen(function* () {
       const resolved = yield* SessionRunnerModel.fromCatalogModel(

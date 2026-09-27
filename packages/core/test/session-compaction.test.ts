@@ -8,6 +8,8 @@ import { LLM, LLMEvent } from "@opencode-ai/llm"
 import { configure } from "@opencode-ai/llm/providers/openai"
 import { DateTime, Effect, Stream } from "effect"
 import { it } from "./lib/effect"
+import { Config } from "@opencode-ai/core/config"
+import { ConfigCompaction } from "@opencode-ai/core/config/compaction"
 
 test("compaction prompt preserves detailed work state and relevant files", () => {
   const prompt = SessionCompaction.buildPrompt({ context: ["conversation history"] })
@@ -69,6 +71,8 @@ for (const reason of [
   "provider-error",
   "late-text",
   "empty",
+  "estimated",
+  "disabled",
 ] as const) {
   it.effect(`compaction only commits a complete summary: ${reason}`, () =>
     Effect.gen(function* () {
@@ -100,8 +104,20 @@ for (const reason of [
           ? []
           : [
               LLMEvent.finish({
-                reason: reason === "provider-error" || reason === "late-text" || reason === "empty" ? "stop" : reason,
-                usage: { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 50, cost: 0.01 },
+                reason:
+                  reason === "provider-error" ||
+                  reason === "late-text" ||
+                  reason === "empty" ||
+                  reason === "estimated" ||
+                  reason === "disabled"
+                    ? "stop"
+                    : reason,
+                usage: {
+                  inputTokens: 100,
+                  outputTokens: 20,
+                  cacheReadInputTokens: 50,
+                  ...(reason === "estimated" ? {} : { cost: 0.01 }),
+                },
               }),
             ]),
         ...(reason === "provider-error" ? [LLMEvent.providerError({ message: "failed" })] : []),
@@ -109,13 +125,27 @@ for (const reason of [
       ]
       const compaction = SessionCompaction.make({
         events,
-        config: [],
-        llm: { stream: () => Stream.fromIterable(stream) },
+        config:
+          reason === "disabled"
+            ? [
+                new Config.Document({
+                  type: "document",
+                  info: new Config.Info({ compaction: new ConfigCompaction.Info({ auto: false }) }),
+                }),
+              ]
+            : [],
+        llm: {
+          stream: () => {
+            expect(reason).not.toBe("disabled")
+            return Stream.fromIterable(stream)
+          },
+        },
       })
       const result = yield* compaction.compactAfterOverflow({
         sessionID: SessionV2.ID.make("ses_compaction_terminal"),
         model,
         request: LLM.request({ model, messages: [] }),
+        prices: [{ input: 2, output: 10, cache: { read: 0.2, write: 2.5 } }],
         entries: [
           {
             seq: 0,
@@ -128,7 +158,12 @@ for (const reason of [
           },
         ],
       })
-      expect(result).toBe(reason === "stop")
+      expect(result).toBe(reason === "stop" || reason === "estimated")
+      if (reason === "disabled") {
+        expect(accounting).toHaveLength(0)
+        expect(published).toEqual([])
+        return
+      }
       expect(accounting).toHaveLength(1)
       if (reason === "length" || reason === "content-filter" || reason === "tool-calls")
         expect(accounting[0]).toMatchObject({ finish: reason })
@@ -136,10 +171,16 @@ for (const reason of [
         usage:
           reason === "eof"
             ? { costSource: "unknown" }
-            : { input: 100, output: 20, cacheRead: 50, cost: 0.01, costSource: "reported" },
+            : {
+                input: 100,
+                output: 20,
+                cacheRead: 50,
+                cost: reason === "estimated" ? 0.00031 : 0.01,
+                costSource: reason === "estimated" ? "estimated" : "reported",
+              },
       })
       expect(published).toEqual(
-        reason === "stop"
+        reason === "stop" || reason === "estimated"
           ? [
               SessionEvent.Compaction.Started.type,
               SessionEvent.Compaction.Accounted.type,

@@ -392,9 +392,9 @@ const layer: Layer.Layer<
       }
 
       const directory = yield* canonical(input.directory)
-
-      // Preserve the loaded path casing for the store cache; `directory` is lowercased on Windows.
-      if (directory !== (yield* canonical(ctx.worktree))) yield* store.disposeDirectory(input.directory)
+      if (directory === (yield* canonical(ctx.project.worktree))) {
+        return yield* new RemoveFailedError({ message: "Cannot remove the primary worktree" })
+      }
 
       const list = yield* git(["worktree", "list", "--porcelain"], { cwd: ctx.worktree })
       if (list.code !== 0) {
@@ -405,11 +405,17 @@ const layer: Layer.Layer<
       const entry = yield* locateWorktree(entries, directory)
 
       if (!entry?.path) {
-        const directoryExists = yield* fs.exists(directory).pipe(Effect.orDie)
-        if (directoryExists) {
-          yield* stopFsmonitor(directory)
-          yield* cleanDirectory(directory)
+        if (!(yield* fs.exists(directory).pipe(Effect.orDie))) return true
+        const owned = (yield* project.sandboxes(ctx.project.id)).map((sandbox) => {
+          const absolute = pathSvc.resolve(sandbox)
+          return process.platform === "win32" ? absolute.toLowerCase() : absolute
+        })
+        if (!owned.includes(directory)) {
+          return yield* new RemoveFailedError({ message: "Directory is not a worktree owned by this project" })
         }
+        yield* store.disposeDirectory(input.directory)
+        yield* stopFsmonitor(directory)
+        yield* cleanDirectory(directory)
         return true
       }
 

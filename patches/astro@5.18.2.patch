@@ -1,0 +1,20 @@
+diff --git a/dist/runtime/server/render/component.js b/dist/runtime/server/render/component.js
+--- a/dist/runtime/server/render/component.js
++++ b/dist/runtime/server/render/component.js
+@@ -1,6 +1,6 @@
+ import { clsx } from "clsx";
+ import { AstroError, AstroErrorData } from "../../../core/errors/index.js";
+-import { markHTMLString } from "../escape.js";
++import { escapeHTML, markHTMLString } from "../escape.js";
+ import { extractDirectives, generateHydrateScript } from "../hydration.js";
+ import { serializeProps } from "../serialize.js";
+ import { shorthash } from "../shorthash.js";
+@@ -290,7 +290,7 @@
+     unrenderedSlots = Object.keys(children);
+   }
+   const template = unrenderedSlots.length > 0 ? unrenderedSlots.map(
+-    (key) => `<template data-astro-template${key !== "default" ? `="${key}"` : ""}>${children[key]}</template>`
++    (key) => `<template data-astro-template${key !== "default" ? `="${escapeHTML(String(key))}"` : ""}>${children[key]}</template>`
+   ).join("") : "";
+   island.children = `${html ?? ""}${template}`;
+   if (island.children) {

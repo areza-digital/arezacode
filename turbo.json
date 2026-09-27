@@ -4,6 +4,18 @@
   "globalPassThroughEnv": ["CI", "OPENCODE_DISABLE_SHARE"],
   "tasks": {
     "typecheck": {},
+    "test": {
+      "dependsOn": ["^test:inputs"],
+      "outputs": []
+    },
+    "test:inputs": {
+      "dependsOn": ["^test:inputs"],
+      "outputs": []
+    },
+    "@opencode-ai/sdk#test:inputs": {
+      "dependsOn": ["build"],
+      "outputs": []
+    },
     "build": {
       "dependsOn": [],
       "outputs": ["dist/**"]

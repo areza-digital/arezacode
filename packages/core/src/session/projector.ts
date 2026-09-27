@@ -12,6 +12,8 @@ import { SessionMessage } from "./message"
 import { SessionMessageUpdater } from "./message-updater"
 import { SessionInput } from "./input"
 import { SessionHealth } from "./health"
+import { SessionHistory } from "./history"
+import { SessionContextEpoch } from "./context-epoch"
 import { WorkspaceV2 } from "../workspace"
 import { MessageTable, PartTable, SessionInputTable, SessionMessageTable, SessionTable } from "./sql"
 import type { DeepMutable } from "../schema"
@@ -497,12 +499,25 @@ const layer = Layer.effectDiscard(
           )
           .run()
           .pipe(Effect.orDie)
+        const task = yield* SessionHistory.taskBoundary(db, event.data.sessionID)
+        const metadata =
+          (yield* SessionHealth.taskID(db, event.data.sessionID)) === (task?.id ?? null)
+            ? sql`coalesce(${SessionTable.metadata}, '{}')`
+            : sql`json_remove(coalesce(${SessionTable.metadata}, '{}'), '$.contextLock')`
+        yield* SessionContextEpoch.reset(db, event.data.sessionID)
         yield* db
           .update(SessionTable)
-          .set({ revert: null, time_updated: DateTime.toEpochMillis(event.data.timestamp) })
+          .set({
+            revert: null,
+            metadata: task
+              ? sql`json_set(${metadata}, '$.contextStart', json(${JSON.stringify({ messageID: task.id, time: task.timeCreated })}))`
+              : sql`json_remove(${metadata}, '$.contextStart')`,
+            time_updated: DateTime.toEpochMillis(event.data.timestamp),
+          })
           .where(eq(SessionTable.id, event.data.sessionID))
           .run()
           .pipe(Effect.orDie)
+        yield* SessionHealth.get(db, event.data.sessionID)
       }),
     )
   }),

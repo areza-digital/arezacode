@@ -3,6 +3,7 @@ import { AgentV2 } from "@opencode-ai/core/agent"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { SkillV2 } from "@opencode-ai/core/skill"
 import { PermissionV2 } from "@opencode-ai/core/permission"
+import { SessionRunnerModel } from "@opencode-ai/core/session/runner/model"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Api } from "../api"
@@ -25,6 +26,7 @@ export const JevHandler = HttpApiBuilder.group(Api, "server.jev", (handlers) =>
           : []
         const models = (yield* catalog.model.available()).filter(
           (model) =>
+            SessionRunnerModel.supported(model) &&
             model.enabled &&
             model.capabilities.tools &&
             model.status !== "deprecated" &&
@@ -33,19 +35,21 @@ export const JevHandler = HttpApiBuilder.group(Api, "server.jev", (handlers) =>
         return yield* Effect.promise(() =>
           Jev.prepare(ctx.payload, {
             skills: available,
-            models: models.flatMap((model) => [undefined, ...model.variants.map((variant) => variant.id)].map((variant) => ({
-              providerID: model.providerID,
-              modelID: model.id,
-              variant,
-              name: model.name,
-              description: JSON.stringify({
-                family: model.family,
-                context: model.limit.context,
-                cost: model.cost,
-                inputs: model.capabilities.input,
-                reasoningEffort: variant ?? model.request.variant ?? "default",
-              }),
-            }))),
+            models: models.flatMap((model) =>
+              [undefined, ...model.variants.map((variant) => variant.id)].map((variant) => ({
+                providerID: model.providerID,
+                modelID: model.id,
+                variant,
+                name: model.name,
+                reasoningEffort: variant ?? model.request.variant ?? (model.variants.length ? "unknown" : undefined),
+                description: JSON.stringify({
+                  family: model.family,
+                  context: model.limit.context,
+                  cost: model.cost,
+                  inputs: model.capabilities.input,
+                }),
+              })),
+            ),
           }),
         )
       }),

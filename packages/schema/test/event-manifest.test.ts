@@ -9,8 +9,11 @@ import { WorkspaceEvent } from "../src/workspace-event"
 
 describe("public event manifest", () => {
   test("owns the complete public event surface", () => {
-    expect(EventManifest.ServerDefinitions.length).toBe(60)
-    expect(EventManifest.Definitions.length).toBe(90)
+    expect(EventManifest.ServerDefinitions).toEqual(expect.arrayContaining(SessionEvent.Definitions))
+    expect(EventManifest.Definitions).toEqual(expect.arrayContaining(EventManifest.ServerDefinitions))
+    expect(new Set(EventManifest.Definitions.map((definition) => definition.type)).size).toBe(
+      EventManifest.Definitions.length,
+    )
     expect(SessionV1.Event.Definitions).toEqual([
       SessionV1.Event.Created,
       SessionV1.Event.Updated,
@@ -23,8 +26,20 @@ describe("public event manifest", () => {
       SessionV1.Event.Diff,
       SessionV1.Event.Error,
     ])
-    expect(EventManifest.Latest.size).toBe(90)
-    expect(EventManifest.Durable.size).toBe(37)
+    expect([...EventManifest.Latest.values()]).toEqual([...EventManifest.Definitions])
+    expect(new Set(EventManifest.Durable.values())).toEqual(
+      new Set([
+        ...SessionV1.Event.Definitions.filter((definition) => definition.durable !== undefined),
+        ...SessionEvent.DurableDefinitions,
+      ]),
+    )
+    SessionV1.Event.Definitions.forEach((definition) => {
+      expect(EventManifest.Definitions).toContain(definition)
+      expect(EventManifest.ServerDefinitions.includes(definition)).toBe(definition.durable !== undefined)
+    })
+    EventManifest.Durable.forEach((definition, key) => {
+      expect(key).toBe(`${definition.type}.${definition.durable?.version}`)
+    })
   })
 
   test("uses canonical definitions for current public events", () => {
@@ -44,11 +59,9 @@ describe("public event manifest", () => {
     expect(Reference.Event.Definitions).toEqual([Reference.Event.Updated])
     expect(EventManifest.Latest.has("ide.installed")).toBe(false)
     expect(IdeEvent.Definitions).toEqual([IdeEvent.Installed])
-    expect(EventManifest.Definitions.slice(45, 48)).toEqual([
-      SessionV1.Event.PartDelta,
-      SessionV1.Event.Diff,
-      SessionV1.Event.Error,
-    ])
+    expect(EventManifest.Latest.get("message.part.delta")).toBe(SessionV1.Event.PartDelta)
+    expect(EventManifest.Latest.get("session.diff")).toBe(SessionV1.Event.Diff)
+    expect(EventManifest.Latest.get("session.error")).toBe(SessionV1.Event.Error)
     expect(EventManifest.Durable.has("session.next.step.ended.1")).toBe(false)
     expect(EventManifest.Durable.get("session.next.step.ended.2")).toBe(SessionEvent.Step.Ended)
   })

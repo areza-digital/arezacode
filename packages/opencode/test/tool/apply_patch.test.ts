@@ -5,19 +5,32 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Cause, Effect, Exit, Layer, Schema } from "effect"
 import { ApplyPatchTool } from "../../src/tool/apply_patch"
+import { Permission } from "../../src/permission"
 import { LSP } from "@/lsp/lsp"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { FileMutation } from "@opencode-ai/core/file-mutation"
+import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Format } from "../../src/format"
 import { Agent } from "../../src/agent/agent"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { Truncate } from "@/tool/truncate"
-import { TestInstance } from "../fixture/fixture"
+import { TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { testEffect } from "../lib/effect"
 
 const it = testEffect(
   LayerNode.compile(
-    LayerNode.group([LSP.node, FSUtil.node, Format.node, EventV2Bridge.node, Truncate.node, Agent.node]),
+    LayerNode.group([
+      LSP.node,
+      FSUtil.node,
+      FileMutation.node,
+      CrossSpawnSpawner.node,
+      Format.node,
+      EventV2Bridge.node,
+      Truncate.node,
+      Agent.node,
+      Permission.node,
+    ]),
   ),
 )
 
@@ -87,6 +100,161 @@ const expectFailure = <A, E, R>(effect: Effect.Effect<A, E, R>, message?: string
 const expectReadFailure = (filepath: string) => expectFailure(readText(filepath))
 
 describe("tool.apply_patch freeform", () => {
+  for (const external of ["source", "destination"] as const) {
+    it.instance(
+      `denies a traversing ${external} path before applying any changes`,
+      () =>
+        Effect.gen(function* () {
+          const test = yield* TestInstance
+          const outside = yield* tmpdirScoped()
+          const permission = yield* Permission.Service
+          const source = path.join(external === "source" ? outside : test.directory, "source.txt")
+          const destination = path.join(external === "destination" ? outside : test.directory, "destination.txt")
+          yield* writeText(source, "old\n")
+          yield* writeText(destination, "keep\n")
+          const requests: string[] = []
+          yield* expectFailure(
+            execute(
+              {
+                patchText: `*** Begin Patch\n*** Add File: extra.txt\n+extra\n*** Update File: ${path.relative(test.directory, source)}\n*** Move to: ${path.relative(test.directory, destination)}\n@@\n-old\n+new\n*** End Patch`,
+              },
+              {
+                ...baseCtx,
+                ask: (input) => {
+                  requests.push(input.permission)
+                  return permission
+                    .ask({
+                      ...input,
+                      sessionID: baseCtx.sessionID,
+                      ruleset: [
+                        { permission: "edit", pattern: "*", action: "allow" },
+                        { permission: "external_directory", pattern: "*", action: "deny" },
+                      ],
+                    })
+                    .pipe(Effect.orDie)
+                },
+              },
+            ),
+          )
+          expect(requests).toEqual(["external_directory"])
+          expect(yield* readText(source)).toBe("old\n")
+          expect(yield* readText(destination)).toBe("keep\n")
+          yield* expectReadFailure(path.join(test.directory, "extra.txt"))
+        }),
+      { git: true },
+    )
+  }
+
+  it.instance("runs every change guard before committing any patch files", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const { ctx, calls } = makeCtx()
+      const target = path.join(test.directory, "card.tsx")
+      const before = "export const Card = () => <p>Ready</p>\n"
+      yield* writeText(target, before)
+      yield* expectFailure(
+        execute(
+          {
+            patchText:
+              "*** Begin Patch\n*** Add File: extra.txt\n+extra\n*** Update File: card.tsx\n@@\n-export const Card = () => <p>Ready</p>\n+export const Card = () => <p>Ready · Today</p>\n*** End Patch",
+          },
+          ctx,
+        ),
+        "UI copy policy",
+      )
+      expect(calls).toHaveLength(1)
+      expect(yield* readText(target)).toBe(before)
+      yield* expectReadFailure(path.join(test.directory, "extra.txt"))
+    }),
+  )
+
+  it.instance(
+    "denies a move into a protected destination before changing either file",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const permission = yield* Permission.Service
+        const source = path.join(test.directory, "allowed.txt")
+        const destination = path.join(test.directory, "protected.txt")
+        yield* writeText(source, "old\n")
+        yield* writeText(destination, "protected\n")
+        yield* expectFailure(
+          execute(
+            {
+              patchText:
+                "*** Begin Patch\n*** Update File: allowed.txt\n*** Move to: protected.txt\n@@\n-old\n+new\n*** End Patch",
+            },
+            {
+              ...baseCtx,
+              ask: (input) =>
+                permission
+                  .ask({
+                    ...input,
+                    sessionID: baseCtx.sessionID,
+                    ruleset: [
+                      { permission: "edit", pattern: "*", action: "allow" },
+                      { permission: "edit", pattern: "protected.txt", action: "deny" },
+                    ],
+                  })
+                  .pipe(Effect.orDie),
+            },
+          ),
+        )
+        expect(yield* readText(source)).toBe("old\n")
+        expect(yield* readText(destination)).toBe("protected\n")
+      }),
+    { git: true },
+  )
+
+  for (const operation of ["add", "update", "delete", "move-source", "move-destination"] as const) {
+    it.instance(`rejects stale ${operation} after approval without applying other patch changes`, () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const source = path.join(test.directory, "source.txt")
+        const destination = path.join(test.directory, "destination.txt")
+        yield* writeText(source, "old\n")
+        yield* writeText(destination, "destination\n")
+        const patch =
+          operation === "add"
+            ? "*** Add File: source.txt\n+new"
+            : operation === "delete"
+              ? "*** Delete File: source.txt"
+              : `*** Update File: source.txt\n${operation.startsWith("move") ? "*** Move to: destination.txt\n" : ""}@@\n-old\n+new`
+        yield* expectFailure(
+          execute(
+            { patchText: `*** Begin Patch\n*** Add File: extra.txt\n+extra\n${patch}\n*** End Patch` },
+            {
+              ...baseCtx,
+              ask: () => writeText(operation === "move-destination" ? destination : source, "newer\n"),
+            },
+          ),
+          "File changed before the mutation",
+        )
+        expect(yield* readText(source)).toBe(operation === "move-destination" ? "old\n" : "newer\n")
+        expect(yield* readText(destination)).toBe(operation === "move-destination" ? "newer\n" : "destination\n")
+        yield* expectReadFailure(path.join(test.directory, "extra.txt"))
+      }),
+    )
+  }
+
+  it.instance("preserves a file created while add approval is pending", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const target = path.join(test.directory, "appeared.txt")
+      yield* expectFailure(
+        execute(
+          { patchText: "*** Begin Patch\n*** Add File: appeared.txt\n+new\n*** End Patch" },
+          {
+            ...baseCtx,
+            ask: () => writeText(target, "winner\n"),
+          },
+        ),
+        "File changed before the mutation",
+      )
+      expect(yield* readText(target)).toBe("winner\n")
+    }),
+  )
+
   it.live("requires patchText", () =>
     Effect.gen(function* () {
       const { ctx } = makeCtx()
@@ -193,6 +361,7 @@ describe("tool.apply_patch freeform", () => {
         expect(calls.length).toBe(1)
         const permissionCall = calls[0]
         expect(permissionCall.metadata.files).toHaveLength(1)
+        expect(permissionCall.patterns).toEqual(["old/name.txt", "renamed/dir/name.txt"])
 
         const moveFile = permissionCall.metadata.files[0]
         expect(moveFile.type).toBe("move")
@@ -300,7 +469,7 @@ describe("tool.apply_patch freeform", () => {
   it.instance("moves file overwriting existing destination", () =>
     Effect.gen(function* () {
       const test = yield* TestInstance
-      const { ctx } = makeCtx()
+      const { ctx, calls } = makeCtx()
       const original = path.join(test.directory, "old", "name.txt")
       const destination = path.join(test.directory, "renamed", "dir", "name.txt")
       yield* makeDir(path.dirname(original))
@@ -313,21 +482,64 @@ describe("tool.apply_patch freeform", () => {
 
       yield* execute({ patchText }, ctx)
 
+      expect(calls[0].metadata.diff).toContain("-existing")
+      expect(calls[0].metadata.files).toHaveLength(2)
+      expect(calls[0].metadata.files[0]).toMatchObject({
+        filePath: original,
+        type: "delete",
+        additions: 0,
+        deletions: 1,
+      })
+      expect(calls[0].metadata.files[0].patch).toContain("-from")
+      expect(calls[0].metadata.files[1]).toMatchObject({
+        filePath: destination,
+        type: "update",
+        additions: 1,
+        deletions: 1,
+      })
+      expect(calls[0].metadata.files[1].patch).toContain("-existing")
       yield* expectReadFailure(original)
       expect(yield* readText(destination)).toBe("new\n")
+    }),
+  )
+
+  it.instance("rejects a move to an alias of its source without changing files", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const { ctx, calls } = makeCtx()
+      const source = path.join(test.directory, "source.txt")
+      const destination = path.join(test.directory, "alias.txt")
+      yield* writeText(source, "old\n")
+      yield* Effect.promise(() => fs.symlink(source, destination))
+      yield* expectFailure(
+        execute(
+          {
+            patchText:
+              "*** Begin Patch\n*** Add File: extra.txt\n+extra\n*** Update File: source.txt\n*** Move to: alias.txt\n@@\n-old\n+new\n*** End Patch",
+          },
+          ctx,
+        ),
+        "multiple changes target the same file",
+      )
+      expect(calls).toHaveLength(0)
+      expect(yield* readText(source)).toBe("old\n")
+      expect(yield* readText(destination)).toBe("old\n")
+      yield* expectReadFailure(path.join(test.directory, "extra.txt"))
     }),
   )
 
   it.instance("adds file overwriting existing file", () =>
     Effect.gen(function* () {
       const test = yield* TestInstance
-      const { ctx } = makeCtx()
+      const { ctx, calls } = makeCtx()
       const target = path.join(test.directory, "duplicate.txt")
       yield* writeText(target, "old content\n")
 
       const patchText = "*** Begin Patch\n*** Add File: duplicate.txt\n+new content\n*** End Patch"
 
       yield* execute({ patchText }, ctx)
+      expect(calls[0].metadata.diff).toContain("-old content")
+      expect(calls[0].metadata.files[0].patch).toContain("-old content")
       expect(yield* readText(target)).toBe("new content\n")
     }),
   )

@@ -81,7 +81,14 @@ export const SessionListQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
   roots: Schema.optional(QueryBoolean),
   start: Schema.optional(Schema.NumberFromString),
-  cursor: Schema.optional(Schema.NumberFromString),
+  cursor: Schema.optional(
+    Schema.Union([
+      Schema.NumberFromString.pipe(Schema.decodeTo(Schema.Finite)),
+      Schema.String.check(Schema.isPattern(/^v1\.[A-Za-z0-9_-]+$/)),
+    ]),
+  ).annotate({
+    description: "Continuation cursor returned in X-Next-Cursor. Legacy timestamp cursors remain accepted.",
+  }),
   search: Schema.optional(Schema.String),
   limit: Schema.optional(Schema.NumberFromString),
   archived: Schema.optional(QueryBoolean),
@@ -224,6 +231,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
         HttpApiEndpoint.get("session", ExperimentalPaths.session, {
           query: SessionListQuery,
           success: described(Schema.Array(Session.GlobalInfo), "List of sessions"),
+          error: HttpApiError.BadRequest,
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "experimental.session.list",

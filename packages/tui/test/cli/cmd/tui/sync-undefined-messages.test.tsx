@@ -13,7 +13,7 @@ import { directory, json, mount } from "./sync-fixture"
 const sessionID = "ses_undef"
 
 describe("tui sync (#26560)", () => {
-  test("entering a session whose messages endpoint errors does not crash sync", async () => {
+  test("failed history preserves cached messages and retries on the next entry", async () => {
     await using tmp = await tmpdir()
     await Bun.write(`${tmp.path}/kv.json`, "{}")
 
@@ -25,9 +25,13 @@ describe("tui sync (#26560)", () => {
       directory,
       project_id: "proj_test",
     }
+    let requests = 0
     const { app, sync } = await mount((url) => {
       if (url.pathname === `/session/${sessionID}`) return json(sessionPayload)
-      if (url.pathname === `/session/${sessionID}/messages`) return json({}, { status: 500 })
+      if (url.pathname === `/session/${sessionID}/message`) {
+        requests++
+        return requests === 1 ? json({}, { status: 500 }) : json([])
+      }
       if (url.pathname === `/session/${sessionID}/todo`) return json([])
       if (url.pathname === `/session/${sessionID}/diff`) return json([])
       if (url.pathname === "/session") return json([sessionPayload])
@@ -35,7 +39,21 @@ describe("tui sync (#26560)", () => {
     }, tmp.path)
 
     try {
-      await expect(sync.session.sync(sessionID)).resolves.toBeUndefined()
+      sync.set("message", sessionID, [
+        {
+          id: "msg_cached",
+          sessionID,
+          role: "user",
+          time: { created: 1 },
+          agent: "build",
+          model: { providerID: "test", modelID: "test" },
+        },
+      ])
+      await expect(sync.session.sync(sessionID)).rejects.toBeDefined()
+      expect(sync.data.message[sessionID].map((message) => message.id)).toEqual(["msg_cached"])
+      await sync.session.sync(sessionID)
+      expect(requests).toBe(2)
+      expect(sync.data.message[sessionID]).toEqual([])
     } finally {
       app.renderer.destroy()
     }

@@ -8,7 +8,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "bun test --timeout 5000",
+    "test": "bun test ./test/import-boundaries.test.ts --timeout 5000",
+    "test:integration": "bun test ./test/embedded.test.ts --timeout 5000",
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {

@@ -1,7 +1,7 @@
 import type { Stripe } from "stripe"
 import { Billing } from "@opencode-ai/console-core/billing.js"
 import type { APIEvent } from "@solidjs/start/server"
-import { and, Database, eq, sql } from "@opencode-ai/console-core/drizzle/index.js"
+import { Database, eq, sql } from "@opencode-ai/console-core/drizzle/index.js"
 import { BillingTable, LiteTable, PaymentTable } from "@opencode-ai/console-core/schema/billing.sql.js"
 import { Identifier } from "@opencode-ai/console-core/identifier.js"
 import { centsToMicroCents } from "@opencode-ai/console-core/util/price.js"
@@ -10,6 +10,7 @@ import { Resource } from "@opencode-ai/console-resource"
 import { LiteData } from "@opencode-ai/console-core/lite.js"
 import { BlackData } from "@opencode-ai/console-core/black.js"
 import { Referral } from "@opencode-ai/console-core/referral.js"
+import { refundPayment, withBillingEvent } from "@opencode-ai/console-core/billing-event.js"
 
 export async function POST(input: APIEvent) {
   const body = await Billing.stripe().webhooks.constructEventAsync(
@@ -17,7 +18,7 @@ export async function POST(input: APIEvent) {
     input.request.headers.get("stripe-signature")!,
     Resource.STRIPE_WEBHOOK_SECRET.value,
   )
-  console.log(body.type, JSON.stringify(body, null, 2))
+  console.log(body.type, body.id)
 
   return (async () => {
     if (body.type === "customer.updated") {
@@ -76,33 +77,36 @@ export async function POST(input: APIEvent) {
         const paymentMethod = paymentIntent.payment_method
         if (!paymentMethod || typeof paymentMethod === "string") throw new Error("Payment method not expanded")
 
-        await Database.transaction(async (tx) => {
-          await tx
-            .update(BillingTable)
-            .set({
-              balance: sql`${BillingTable.balance} + ${centsToMicroCents(amountInCents)}`,
+        await withBillingEvent(
+          { eventID: body.id, workspaceID, operation: `payment:${invoiceID}`, invoiceID },
+          async (tx) => {
+            await tx
+              .update(BillingTable)
+              .set({
+                balance: sql`${BillingTable.balance} + ${centsToMicroCents(amountInCents)}`,
+                customerID,
+                paymentMethodID: paymentMethod.id,
+                paymentMethodLast4: paymentMethod.card?.last4 ?? null,
+                paymentMethodType: paymentMethod.type,
+                // enable reload if first time enabling billing
+                ...(customer?.customerID
+                  ? {}
+                  : {
+                      reloadError: null,
+                      timeReloadError: null,
+                    }),
+              })
+              .where(eq(BillingTable.workspaceID, workspaceID))
+            await tx.insert(PaymentTable).values({
+              workspaceID,
+              id: Identifier.create("payment"),
+              amount: centsToMicroCents(amountInCents),
+              paymentID,
+              invoiceID,
               customerID,
-              paymentMethodID: paymentMethod.id,
-              paymentMethodLast4: paymentMethod.card?.last4 ?? null,
-              paymentMethodType: paymentMethod.type,
-              // enable reload if first time enabling billing
-              ...(customer?.customerID
-                ? {}
-                : {
-                    reloadError: null,
-                    timeReloadError: null,
-                  }),
             })
-            .where(eq(BillingTable.workspaceID, workspaceID))
-          await tx.insert(PaymentTable).values({
-            workspaceID,
-            id: Identifier.create("payment"),
-            amount: centsToMicroCents(amountInCents),
-            paymentID,
-            invoiceID,
-            customerID,
-          })
-        })
+          },
+        )
       })
     }
     if (body.type === "customer.subscription.created") {
@@ -141,39 +145,42 @@ export async function POST(input: APIEvent) {
             })
           }
 
-          await Database.transaction(async (tx) => {
-            await tx
-              .update(BillingTable)
-              .set({
-                customerID,
-                liteSubscriptionID: subscriptionID,
-                lite: {},
-                paymentMethodID: paymentMethod.id,
-                paymentMethodLast4: paymentMethod.card?.last4 ?? null,
-                paymentMethodType: paymentMethod.type,
+          await withBillingEvent(
+            { eventID: body.id, workspaceID, operation: `subscription:${subscriptionID}` },
+            async (tx) => {
+              await tx
+                .update(BillingTable)
+                .set({
+                  customerID,
+                  liteSubscriptionID: subscriptionID,
+                  lite: {},
+                  paymentMethodID: paymentMethod.id,
+                  paymentMethodLast4: paymentMethod.card?.last4 ?? null,
+                  paymentMethodType: paymentMethod.type,
+                })
+                .where(eq(BillingTable.workspaceID, workspaceID))
+
+              await tx.insert(LiteTable).values({
+                workspaceID,
+                id: Identifier.create("lite"),
+                userID: userID,
               })
-              .where(eq(BillingTable.workspaceID, workspaceID))
 
-            await tx.insert(LiteTable).values({
-              workspaceID,
-              id: Identifier.create("lite"),
-              userID: userID,
-            })
-
-            if (userEmail) {
-              if (coupon === LiteData.firstMonth50Coupon) {
-                await Billing.redeemCoupon(userEmail, "GO1MONTH50")
-              } else if (coupon === LiteData.firstMonth100Coupon) {
-                await Billing.redeemCoupon(userEmail, "GOFREEMONTH")
-              } else if (coupon === LiteData.threeMonths100Coupon) {
-                await Billing.redeemCoupon(userEmail, "GO3MONTHS100")
-              } else if (coupon === LiteData.sixMonths100Coupon) {
-                await Billing.redeemCoupon(userEmail, "GO6MONTHS100")
-              } else if (coupon === LiteData.twelveMonths100Coupon) {
-                await Billing.redeemCoupon(userEmail, "GO12MONTHS100")
+              if (userEmail) {
+                if (coupon === LiteData.firstMonth50Coupon) {
+                  await Billing.redeemCoupon(userEmail, "GO1MONTH50")
+                } else if (coupon === LiteData.firstMonth100Coupon) {
+                  await Billing.redeemCoupon(userEmail, "GOFREEMONTH")
+                } else if (coupon === LiteData.threeMonths100Coupon) {
+                  await Billing.redeemCoupon(userEmail, "GO3MONTHS100")
+                } else if (coupon === LiteData.sixMonths100Coupon) {
+                  await Billing.redeemCoupon(userEmail, "GO6MONTHS100")
+                } else if (coupon === LiteData.twelveMonths100Coupon) {
+                  await Billing.redeemCoupon(userEmail, "GO12MONTHS100")
+                }
               }
-            }
-          })
+            },
+          )
 
           await Referral.completeFromLiteSubscription({
             workspaceID,
@@ -248,7 +255,7 @@ export async function POST(input: APIEvent) {
         )
         if (!workspaceID) throw new Error("Workspace ID not found for customer")
 
-        await Database.use((tx) =>
+        await withBillingEvent({ eventID: body.id, workspaceID, operation: `payment:${invoiceID}`, invoiceID }, (tx) =>
           tx.insert(PaymentTable).values({
             workspaceID,
             id: Identifier.create("payment"),
@@ -279,24 +286,27 @@ export async function POST(input: APIEvent) {
           const invoice = await Billing.stripe().invoices.retrieve(invoiceID, {
             expand: ["payments"],
           })
-          await Database.transaction(async (tx) => {
-            await tx
-              .update(BillingTable)
-              .set({
-                balance: sql`${BillingTable.balance} + ${centsToMicroCents(amountInCents)}`,
-                reloadError: null,
-                timeReloadError: null,
+          await withBillingEvent(
+            { eventID: body.id, workspaceID, operation: `payment:${invoiceID}`, invoiceID },
+            async (tx) => {
+              await tx
+                .update(BillingTable)
+                .set({
+                  balance: sql`${BillingTable.balance} + ${centsToMicroCents(amountInCents)}`,
+                  reloadError: null,
+                  timeReloadError: null,
+                })
+                .where(eq(BillingTable.workspaceID, Actor.workspace()))
+              await tx.insert(PaymentTable).values({
+                workspaceID: Actor.workspace(),
+                id: Identifier.create("payment"),
+                amount: centsToMicroCents(amountInCents),
+                invoiceID,
+                paymentID: invoice.payments?.data[0].payment.payment_intent as string,
+                customerID,
               })
-              .where(eq(BillingTable.workspaceID, Actor.workspace()))
-            await tx.insert(PaymentTable).values({
-              workspaceID: Actor.workspace(),
-              id: Identifier.create("payment"),
-              amount: centsToMicroCents(amountInCents),
-              invoiceID,
-              paymentID: invoice.payments?.data[0].payment.payment_intent as string,
-              customerID,
-            })
-          })
+            },
+          )
         })
       }
     }
@@ -346,35 +356,15 @@ export async function POST(input: APIEvent) {
       )
       if (!workspaceID) throw new Error("Workspace ID not found")
 
-      const payment = await Database.use((tx) =>
-        tx
-          .select({
-            amount: PaymentTable.amount,
-            enrichment: PaymentTable.enrichment,
-          })
-          .from(PaymentTable)
-          .where(and(eq(PaymentTable.paymentID, paymentIntentID), eq(PaymentTable.workspaceID, workspaceID)))
-          .then((rows) => rows[0]),
-      )
-      if (!payment) throw new Error("Payment not found")
-
-      await Database.transaction(async (tx) => {
-        await tx
-          .update(PaymentTable)
-          .set({
-            timeRefunded: new Date(body.created * 1000),
-          })
-          .where(and(eq(PaymentTable.paymentID, paymentIntentID), eq(PaymentTable.workspaceID, workspaceID)))
-
-        // deduct balance only for top up
-        if (!payment.enrichment?.type) {
-          await tx
-            .update(BillingTable)
-            .set({
-              balance: sql`${BillingTable.balance} - ${payment.amount}`,
-            })
-            .where(eq(BillingTable.workspaceID, workspaceID))
-        }
+      const charge = body.data.object
+      await refundPayment({
+        eventID: body.id,
+        workspaceID,
+        paymentID: paymentIntentID,
+        chargeID: charge.id,
+        charged: charge.amount,
+        refunded: charge.amount_refunded,
+        created: body.created,
       })
     }
   })()

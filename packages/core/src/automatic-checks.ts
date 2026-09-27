@@ -5,6 +5,8 @@ import { lstat, mkdir, readFile, realpath, rename, writeFile, readdir, rm } from
 import path from "node:path"
 import { Global } from "./global"
 import { Jev } from "./jev"
+import { UiPolicy } from "./ui-policy"
+import { UiVerification } from "./ui-verification"
 import { Entire } from "./entire"
 import type { SessionMessage } from "./session/message"
 import { engineCommand, engineEnabled, engineEnvironment, engineResult, engineVersions, nativeBinary, nativeCommand } from "./util/native-command"
@@ -35,6 +37,7 @@ export async function rememberReuse(sessionID: string, target: string, before: s
 }
 
 export async function guardReuse(sessionID: string, target: string, before: string, after: string) {
+  await Jev.guardChange(sessionID, target, before, after)
   if (!sourceFile(target) || before === after || !(await engineEnabled("ponytail"))) return
   const existing = new Set(before.split("\n").map((line) => line.trim()))
   const added = after.split("\n").filter((line) => line.trim() && !existing.has(line.trim()))
@@ -55,6 +58,11 @@ export async function guardReuse(sessionID: string, target: string, before: stri
 
 export async function session(directory: string, sessionID: string) {
   let baseline = await files(directory).catch(() => undefined)
+  const revision = baseline?.revision
+  const verification = UiVerification.create(sessionID, baseline)
+  const originals = new Map(baseline ? await Promise.all([...baseline.files].filter(([name, value]) => UiPolicy.applies(name) && !value.startsWith("oversized:")).map(async ([name]) => [name, await readFile(path.join(baseline!.root, name), "utf8").catch(() => "")] as const)) : [])
+  const pendingUI = new Map<string, string>()
+  let uiNotice = ""
   let notice = ""
   let userID = ""
   let modified = false
@@ -64,24 +72,46 @@ export async function session(directory: string, sessionID: string) {
   }
   return {
     before: async (context: readonly SessionMessage.Message[]) => {
+      verification.observe(baseline, verificationContext(context))
       const user = context.findLast((message) => message.type === "user")
       if (user && user.id !== userID) {
         if (userID) await record("turn-end", context.slice(0, context.indexOf(user)))
         if (!userID) await record("session-start", context)
         await record("turn-start", context)
         userID = user.id
-        Jev.remember(sessionID, user.text)
+        Jev.remember(sessionID, user.text, context.filter((message) => message.type === "user").map((message) => message.text))
         if (await engineEnabled("ponytail")) await engineResult("ponytail", "Build hook active: reuse preflight and mechanical tool checks enabled. Guidance supplied; compliance is verified separately.")
       }
-      return [notice, user ? await Jev.guidance(sessionID, user.id, context.slice(context.indexOf(user) + 1).filter((message) => message.type === "assistant").length) : ""].filter(Boolean).join("\n")
+      return [notice, uiNotice, verification.guidance(), user ? await Jev.guidance(sessionID, user.id, context.slice(context.indexOf(user) + 1).filter((message) => message.type === "assistant").length) : ""].filter(Boolean).join("\n")
     },
     after: async (_context: readonly SessionMessage.Message[], signal?: AbortSignal) => {
       const security = process.env.AREZACODE_SEMGREP !== "0" && await engineEnabled("semgrep")
       const ponytail = await engineEnabled("ponytail")
-      if (baseline && (security || ponytail)) {
+      if (baseline) {
         try {
-          const current = await files(directory)
+          const current = await files(directory, revision)
+          verification.observe(current, verificationContext(_context))
           const changed = new Map([...current.files].filter(([name, value]) => baseline!.files.get(name) !== value))
+          const violations: string[] = []
+          for (const name of new Set([...changed.keys(), ...pendingUI.keys()])) {
+            if (!UiPolicy.applies(name)) continue
+            if (current.files.get(name)?.startsWith("oversized:")) {
+              violations.push(`${name}: UI inspection skipped a file larger than 1 MiB; split the change before claiming verification.`)
+              continue
+            }
+            const content = await readFile(path.join(current.root, name), "utf8").catch(() => undefined)
+            if (content === undefined) { pendingUI.delete(name); continue }
+            const before = pendingUI.get(name) ?? originals.get(name) ?? (baseline.revision ? await nativeCommand("git", ["show", `${baseline.revision}:${name}`], { cwd: current.root }).catch(() => "") : "")
+            try {
+              await Jev.guardChange(sessionID, path.join(current.root, name), before, content)
+              pendingUI.delete(name)
+            } catch (error) {
+              pendingUI.set(name, before)
+              violations.push(`${name}: ${error instanceof Error ? error.message : "UI policy check unavailable"}`)
+            }
+            originals.set(name, content)
+          }
+          uiNotice = violations.length ? `UI policy corrections required before claiming completion. These files were changed outside a successful pre-write check; revise only the offending changes and preserve user edits.\n${violations.join("\n")}` : ""
           if (changed.size || baseline.files.size !== current.files.size) {
             modified = true
             notice = security ? await scan(current.root, changed, sessionID, signal) : ""
@@ -92,10 +122,12 @@ export async function session(directory: string, sessionID: string) {
           }
           baseline = current
         } catch {
-          notice = "Automatic Semgrep failed or is unavailable. Changed files have not passed a security scan."
+          verification.observe(undefined, verificationContext(_context))
+          notice = "Automatic checks failed or are unavailable. Changed files have not passed verification."
         }
       }
     },
+    complete: (canRetry: boolean) => verification.check(canRetry, uiNotice),
     finish: async (context: readonly SessionMessage.Message[]) => {
       if (modified && baseline && process.env.AREZACODE_SEMGREP !== "0" && await engineEnabled("semgrep")) await scan(baseline.root, baseline.files, sessionID).catch(() => engineResult("semgrep", "Final changed-file scan failed; coverage is incomplete."))
       if (userID) await record("turn-end", context)
@@ -104,10 +136,24 @@ export async function session(directory: string, sessionID: string) {
   }
 }
 
-export async function files(directory: string) {
+function verificationContext(context: readonly SessionMessage.Message[]): UiVerification.Context {
+  return {
+    promptID: context.findLast((message) => message.type === "user")?.id ?? "",
+    requests: context.flatMap((message) => message.type === "user" ? [message.text] : []),
+    response: context.findLast((message) => message.type === "assistant")?.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n") ?? "",
+    tools: context.flatMap((message) => message.type === "assistant" ? message.content.flatMap((part) => part.type === "tool" && (part.state.status === "completed" || part.state.status === "error") ? [{
+      id: part.id, tool: part.name, input: JSON.stringify(part.state.input),
+      output: part.state.content.flatMap((content) => content.type === "text" ? [content.text] : []).join("\n"),
+      visual: part.state.content.some((content) => content.type === "file" && content.mime.startsWith("image/")),
+      ok: part.state.status === "completed",
+    }] : []) : []),
+  }
+}
+
+export async function files(directory: string, base?: string) {
   const root = (await nativeCommand("git", ["rev-parse", "--show-toplevel"], { cwd: directory })).trim()
   const [tracked, staged, untracked, revision] = await Promise.all([
-    nativeCommand("git", ["diff", "--name-only", "-z"], { cwd: root }),
+    nativeCommand("git", ["diff", "--name-only", "-z", ...(base ? [base] : [])], { cwd: root }),
     nativeCommand("git", ["diff", "--cached", "--name-only", "-z"], { cwd: root }),
     nativeCommand("git", ["ls-files", "--others", "--exclude-standard", "-z"], { cwd: root }),
     nativeCommand("git", ["rev-parse", "HEAD"], { cwd: root }).catch(() => undefined),
@@ -118,6 +164,7 @@ export async function files(directory: string) {
       const relative = path.relative(root, file)
       if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) return
       const info = await lstat(file).catch(() => undefined)
+      if (!info) return [name, "deleted"] as const
       if (!info?.isFile()) return
       const canonical = path.relative(root, await realpath(file))
       if (canonical === ".." || canonical.startsWith(".." + path.sep) || path.isAbsolute(canonical)) return
@@ -131,7 +178,7 @@ export async function files(directory: string) {
 export function scan(root: string, changed: Map<string, string>, sessionID?: string, signal?: AbortSignal) {
   if (!changed.size) return Promise.resolve("")
   const oversized = [...changed].filter(([, hash]) => hash.startsWith("oversized:"))
-  const targets = [...changed].filter(([, hash]) => !hash.startsWith("oversized:")).map(([name]) => name)
+  const targets = [...changed].filter(([, hash]) => hash !== "deleted" && !hash.startsWith("oversized:")).map(([name]) => name)
   const incomplete = oversized.length
     ? `Semgrep skipped ${oversized.length} changed files larger than 1 MiB; coverage is incomplete.`
     : ""

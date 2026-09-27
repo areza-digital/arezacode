@@ -310,11 +310,21 @@ export type ListInput = {
   limit?: number
 }
 
+const GlobalListAnchor = Schema.Struct({ updated: NonNegativeInt, id: SessionID })
+const GlobalListAnchorJson = Schema.fromJsonString(GlobalListAnchor)
+
+export const globalListCursor = {
+  encode: (session: Info) =>
+    `v1.${Buffer.from(Schema.encodeSync(GlobalListAnchorJson)({ updated: session.time.updated, id: session.id })).toString("base64url")}`,
+  decode: (cursor: string) =>
+    Schema.decodeUnknownSync(GlobalListAnchorJson)(Buffer.from(cursor.slice(3), "base64url").toString("utf8")),
+}
+
 export type GlobalListInput = {
   directory?: string
   roots?: boolean
   start?: number
-  cursor?: number
+  cursor?: number | typeof GlobalListAnchor.Type
   search?: string
   limit?: number
   archived?: boolean
@@ -557,7 +567,16 @@ const layer: Layer.Layer<
       if (input?.directory) conditions.push(eq(SessionTable.directory, input.directory))
       if (input?.roots) conditions.push(isNull(SessionTable.parent_id))
       if (input?.start) conditions.push(gte(SessionTable.time_updated, input.start))
-      if (input?.cursor) conditions.push(lt(SessionTable.time_updated, input.cursor))
+      if (input?.cursor !== undefined) {
+        conditions.push(
+          typeof input.cursor === "number"
+            ? lt(SessionTable.time_updated, input.cursor)
+            : or(
+                lt(SessionTable.time_updated, input.cursor.updated),
+                and(eq(SessionTable.time_updated, input.cursor.updated), lt(SessionTable.id, input.cursor.id)),
+              )!,
+        )
+      }
       if (input?.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
       if (!input?.archived) conditions.push(isNull(SessionTable.time_archived))
 

@@ -57,6 +57,7 @@ class SessionDataMissingError extends NamedError {
 
 const getData = query(async (shareID) => {
   "use server"
+  getRequestEvent()?.response.headers.set("Cache-Control", "no-store")
   const share = await Share.get(shareID)
   if (!share) throw new SessionDataMissingError({ sessionID: shareID })
   const data = await Share.data(shareID)
@@ -122,10 +123,7 @@ const getData = query(async (shareID) => {
 }, "getShareData")
 
 export default function () {
-  getRequestEvent()?.response.headers.set(
-    "Cache-Control",
-    "public, max-age=30, s-maxage=300, stale-while-revalidate=86400",
-  )
+  getRequestEvent()?.response.headers.set("Cache-Control", "no-store")
 
   const params = useParams()
   const data = createAsync(async () => {

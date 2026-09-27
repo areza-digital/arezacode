@@ -30,7 +30,8 @@ export const Input = Schema.Struct({
     description: 'File glob to include in the search (for example, "*.js" or "*.{ts,tsx}")',
   }),
   limit: FileSystem.GrepInput.fields.limit.annotate({
-    description: "Maximum matches to return",
+    description:
+      "Maximum matches to return. Defaults to 100 and is capped at 1000. Narrow the pattern or path for more results.",
   }),
 })
 
@@ -38,7 +39,7 @@ export const Output = Schema.Array(FileSystem.Match)
 type ModelOutput = typeof Output.Encoded
 
 /** Format raw search matches into the familiar concise model output. */
-export const toModelOutput = (output: ModelOutput) => {
+export const toModelOutput = (output: ModelOutput, limit?: number) => {
   const lines = output.length === 0 ? ["No files found"] : [`Found ${output.length} matches`]
   let current = ""
   for (const match of output) {
@@ -49,6 +50,8 @@ export const toModelOutput = (output: ModelOutput) => {
     }
     lines.push(`  Line ${match.line}: ${match.text}`)
   }
+  if (limit !== undefined && output.length >= limit)
+    lines.push(`Result limit reached (${limit}). More matches may exist; narrow the pattern or path.`)
   return lines.join("\n")
 }
 
@@ -96,7 +99,7 @@ const layer = Layer.effectDiscard(
             "Search file contents by regular expression within the active Location or an absolute managed tool-output file. Use a path to narrow the search, include to filter files by glob, and limit to bound the match count. Returns concise file resources, line numbers, and bounded line previews.",
           input: Input,
           output: Output,
-          toModelOutput: ({ output }) => [
+          toModelOutput: ({ input, output }) => [
             {
               type: "text",
               text: toModelOutput(
@@ -104,6 +107,7 @@ const layer = Layer.effectDiscard(
                   ...match,
                   entry: { ...match.entry, path: path.resolve(location.directory, match.entry.path) },
                 })),
+                Math.min(input.limit ?? 100, 1000),
               ),
             },
           ],
@@ -139,7 +143,7 @@ const layer = Layer.effectDiscard(
                   pattern: input.pattern,
                   file: info?.type === "File" ? path.basename(target) : undefined,
                   include: input.include,
-                  limit: input.limit ?? Number.MAX_SAFE_INTEGER,
+                  limit: Math.min(input.limit ?? 100, 1000),
                 })
                 .pipe(
                   Effect.map((result) =>

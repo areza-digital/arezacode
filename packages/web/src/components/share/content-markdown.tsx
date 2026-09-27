@@ -1,6 +1,7 @@
 import { marked } from "marked"
 import { codeToHtml } from "shiki"
 import markedShiki from "marked-shiki"
+import DOMPurify from "dompurify"
 import { createOverflow, useShareMessages } from "./common"
 import { CopyButton } from "./copy-button"
 import { createResource, createSignal } from "solid-js"
@@ -9,9 +10,10 @@ import style from "./content-markdown.module.css"
 const markedWithShiki = marked.use(
   {
     renderer: {
-      link({ href, title, text }) {
-        const titleAttr = title ? ` title="${title}"` : ""
-        return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`
+      link(token) {
+        return new marked.Renderer().link
+          .call(this, token)
+          .replace("<a ", '<a target="_blank" rel="noopener noreferrer" ')
       },
     },
   },
@@ -37,7 +39,14 @@ export function ContentMarkdown(props: Props) {
   const [html] = createResource(
     () => strip(props.text),
     async (markdown) => {
-      return markedWithShiki.parse(markdown)
+      const html = await markedWithShiki.parse(markdown)
+      if (!DOMPurify.isSupported) return ""
+      return DOMPurify.sanitize(html, {
+        USE_PROFILES: { html: true },
+        SANITIZE_NAMED_PROPS: true,
+        FORBID_TAGS: ["style"],
+        ADD_ATTR: ["target"],
+      })
     },
   )
   const [expanded, setExpanded] = createSignal(false)

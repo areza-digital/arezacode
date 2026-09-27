@@ -1,0 +1,13 @@
+diff --git a/lib/express.js b/lib/express.js
+index d188a16db70387967e0f913c2ee7c0bf9f7ffb09..424113f8550ec675db0420eb6c8ec6b111e8e3cb 100644
+--- a/lib/express.js
++++ b/lib/express.js
+@@ -12,7 +12,7 @@
+  * Module dependencies.
+  */
+ 
+-var bodyParser = require('body-parser')
++var bodyParser = require('body-parser1')
+ var EventEmitter = require('events').EventEmitter;
+ var mixin = require('merge-descriptors');
+ var proto = require('./application');

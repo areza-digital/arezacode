@@ -2,6 +2,8 @@ import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import type { Prompt, PromptStore } from "@/context/prompt"
 import type { ModelSelection } from "@/context/local"
+import { createPromptState } from "@/context/prompt-state"
+import { ServerConnection } from "@/context/server"
 
 let createPromptSubmit: typeof import("./submit").createPromptSubmit
 
@@ -43,6 +45,8 @@ let permissionServer = "server-a"
 let createSessionGate: Promise<void> | undefined
 let contextLocked = false
 let healthGate: Promise<void> | undefined
+let switchedServer = false
+const sessionDrafts = new Map<string, ReturnType<typeof createPromptState>>()
 
 let promptValue: Prompt = [{ type: "text", content: "ls", start: 0, end: 2 }]
 const [promptStore, setPromptStore] = createStore<PromptStore>({
@@ -124,6 +128,7 @@ const clientFor = (directory: string) => {
 
 beforeAll(async () => {
   const rootClient = clientFor("/repo/main")
+  const otherClient = clientFor("/repo/other")
 
   mock.module("@solidjs/router", () => ({
     useNavigate: () => () => undefined,
@@ -184,7 +189,7 @@ beforeAll(async () => {
   }))
 
   mock.module("@/context/server", () => ({
-    ServerConnection: { key: () => "server-key" },
+    ServerConnection: { ...ServerConnection, key: () => "server-key" },
     useServer: () => ({
       key: "server-key",
       projects: { forServer: () => ({ assignment: () => undefined, list: () => [] }) },
@@ -194,6 +199,11 @@ beforeAll(async () => {
   mock.module("@/context/tabs", () => ({
     useTabs: () => ({
       draft: () => ({ server: "project-server" }),
+      state: (tab: { sessionId: string }) => {
+        const state = sessionDrafts.get(tab.sessionId) ?? createPromptState()
+        sessionDrafts.set(tab.sessionId, state)
+        return state
+      },
       promoteDraft: (draftID: string, session: { server: string; sessionId: string }) => {
         promotedDrafts.push({ draftID, ...session })
       },
@@ -224,7 +234,8 @@ beforeAll(async () => {
           return clientFor(opts.directory)
         },
       }
-      return () => sdk
+      const other = { ...sdk, scope: "other", directory: "/repo/other", api: otherClient.api }
+      return () => (switchedServer ? other : sdk)
     },
   }))
 
@@ -324,11 +335,66 @@ beforeEach(() => {
   createSessionGate = undefined
   contextLocked = false
   healthGate = undefined
+  switchedServer = false
+  sessionDrafts.clear()
   serverSessionSyncs = 0
   for (const key of Object.keys(storedSessions)) delete storedSessions[key]
 })
 
 describe("prompt submit worktree selection", () => {
+  test.each(["edit", "switch", "repeat"] as const)(
+    "new-session creation preserves the origin during %s",
+    async (change) => {
+      const gate = Promise.withResolvers<void>()
+      createSessionGate = gate.promise
+      search.draftId = "draft-a"
+      const original = createPromptState({ prompt: "original request" })
+      const sibling = createPromptState({ prompt: "sibling request" })
+      let current = original
+      const changedModes: string[] = []
+      const submit = createPromptSubmit({
+        prompt: { ...original, capture: () => current },
+        info: () => undefined,
+        imageAttachments: () => [],
+        commentCount: () => 0,
+        autoAccept: () => false,
+        mode: () => "normal",
+        working: () => false,
+        editor: () => undefined,
+        queueScroll: () => undefined,
+        promptLength: () => 16,
+        addToHistory: () => undefined,
+        resetHistoryNavigation: () => undefined,
+        setMode: (mode) => changedModes.push(mode),
+        setPopover: () => undefined,
+      })
+      const pending = submit.handleSubmit({ preventDefault() {} } as Event)
+      if (change === "repeat") await submit.handleSubmit({ preventDefault() {} } as Event)
+      if (change === "edit") original.set([{ type: "text", content: "newer request", start: 0, end: 13 }])
+      if (change === "switch") {
+        current = sibling
+        search.draftId = "draft-b"
+        switchedServer = true
+      }
+      gate.resolve()
+      await pending
+      await Bun.sleep(0)
+      expect(sentPrompts).toEqual(["/repo/main"])
+      expect(createdSessions).toHaveLength(1)
+      expect(promptInputs[0]).toMatchObject({ text: expect.stringContaining("original request") })
+      expect(sibling.current()[0]).toMatchObject({ content: "sibling request" })
+      expect(changedModes).toEqual([])
+      if (change === "edit") {
+        expect(original.current()[0]).toMatchObject({ content: "newer request" })
+        expect(promotedDrafts).toEqual([])
+      }
+      if (change === "switch") {
+        expect(promotedDrafts).toEqual([{ draftID: "draft-a", server: "project-server", sessionId: "session-1" }])
+        expect(promoted).toEqual([])
+      }
+    },
+  )
+
   test("switching isolation off cannot overtake an independent submission still being prepared", async () => {
     const { sendFollowupDraft } = await import("./submit")
     params = { id: "session-1" }

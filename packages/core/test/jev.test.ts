@@ -13,28 +13,32 @@ const questions = {
   skill: { type: "score" as const, instructions: "Skill relevance", criteria: ["No", "Maybe", "Yes"] },
 }
 
-test("Jev preserves manual choices, confines Auto, protects keys and honors disable", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "areza-jev-test-"))
-  try {
-    const child = Bun.spawn([process.execPath, path.join(import.meta.dir, "fixtures/jev-flow.ts")], {
-      env: {
-        ...process.env,
-        XDG_CONFIG_HOME: directory,
-        XDG_DATA_HOME: directory,
-        XDG_CACHE_HOME: directory,
-        XDG_STATE_HOME: directory,
-        OPENROUTER_API_KEY: "",
-        OPENCODE_AUTH_CONTENT: "",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    const error = await new Response(child.stderr).text()
-    expect(await child.exited, error).toBe(0)
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
-}, 30_000)
+test.each(["jev-flow", "jev-routing"])(
+  "%s preserves manual choices and confines Auto",
+  async (fixture) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "areza-jev-test-"))
+    try {
+      const child = Bun.spawn([process.execPath, path.join(import.meta.dir, `fixtures/${fixture}.ts`)], {
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: directory,
+          XDG_DATA_HOME: directory,
+          XDG_CACHE_HOME: directory,
+          XDG_STATE_HOME: directory,
+          OPENROUTER_API_KEY: "",
+          OPENCODE_AUTH_CONTENT: "",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const error = await new Response(child.stderr).text()
+      expect(await child.exited, error).toBe(0)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  30_000,
+)
 
 test("Jev sends one bounded typed request and rejects invalid, failed, or incomplete answers", async () => {
   const requests: Array<{ state: unknown; model: string; questions: unknown }> = []

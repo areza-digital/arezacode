@@ -10,6 +10,9 @@
     "email": "hello@opencode.ai"
   },
   "scripts": {
+    "test": "ELECTRON_OVERRIDE_DIST_PATH=./node_modules/electron/dist bun test ./src ./electron-builder.config.test.ts --path-ignore-patterns '**/draft-store.test.ts' --only-failures",
+    "test:native": "bun test ./src/main/draft-store.test.ts",
+    "test:services": "AREZA_TEST_DOCKER=0 bun test ./test/project-services.test.ts",
     "test:browser-control": "bun scripts/test-browser-control.ts",
     "typecheck": "tsgo -b",
     "predev": "bun ./scripts/predev.ts",

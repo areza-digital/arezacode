@@ -59,7 +59,12 @@ const openApiDriftRoutes = [
 
 const numericSdkQueryParams = [
   { method: "get", path: ExperimentalPaths.session, name: "start", schema: { type: "number" } },
-  { method: "get", path: ExperimentalPaths.session, name: "cursor", schema: { type: "number" } },
+  {
+    method: "get",
+    path: ExperimentalPaths.session,
+    name: "cursor",
+    schema: { anyOf: [{ type: "number" }, { type: "string", pattern: "^v1\\.[A-Za-z0-9_-]+$" }] },
+  },
   { method: "get", path: ExperimentalPaths.session, name: "limit", schema: { type: "number" } },
   { method: "get", path: FilePaths.findFile, name: "limit", schema: { type: "integer", minimum: 1, maximum: 200 } },
   { method: "get", path: SessionPaths.list, name: "start", schema: { type: "number" } },

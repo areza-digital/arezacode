@@ -17,11 +17,13 @@ export type Event =
   | EventMessagePartUpdated
   | EventMessagePartRemoved
   | EventSessionNextApprovalChanged
+  | EventSessionNextInstructionsChanged
   | EventSessionNextAgentSwitched
   | EventSessionNextModelSwitched
   | EventSessionNextMoved
   | EventSessionNextPrompted
   | EventSessionNextPromptAdmitted
+  | EventSessionNextCommandPrepared
   | EventSessionNextContextUpdated
   | EventSessionNextSynthetic
   | EventSessionNextShellStarted
@@ -832,6 +834,15 @@ export type GlobalEvent = {
       }
     | {
         id: string
+        type: "session.next.instructions.changed"
+        properties: {
+          timestamp: number
+          sessionID: string
+          instructions: string
+        }
+      }
+    | {
+        id: string
         type: "session.next.agent.switched"
         properties: {
           timestamp: number
@@ -880,6 +891,17 @@ export type GlobalEvent = {
           messageID: string
           prompt: Prompt
           delivery: "steer" | "queue"
+          preparation?: SessionInputPreparation
+        }
+      }
+    | {
+        id: string
+        type: "session.next.command.prepared"
+        properties: {
+          timestamp: number
+          sessionID: string
+          messageID: string
+          preparation: SessionInputPreparation
         }
       }
     | {
@@ -1650,11 +1672,13 @@ export type GlobalEvent = {
     | SyncEventMessagePartUpdated
     | SyncEventMessagePartRemoved
     | SyncEventSessionNextApprovalChanged
+    | SyncEventSessionNextInstructionsChanged
     | SyncEventSessionNextAgentSwitched
     | SyncEventSessionNextModelSwitched
     | SyncEventSessionNextMoved
     | SyncEventSessionNextPrompted
     | SyncEventSessionNextPromptAdmitted
+    | SyncEventSessionNextCommandPrepared
     | SyncEventSessionNextContextUpdated
     | SyncEventSessionNextSynthetic
     | SyncEventSessionNextShellStarted
@@ -2785,11 +2809,13 @@ export type UnknownError1 = {
 
 export type SessionDurableEvent =
   | SessionNextApprovalChanged
+  | SessionNextInstructionsChanged
   | SessionNextAgentSwitched
   | SessionNextModelSwitched
   | SessionNextMoved
   | SessionNextPrompted
   | SessionNextPromptAdmitted
+  | SessionNextCommandPrepared
   | SessionNextContextUpdated
   | SessionNextSynthetic
   | SessionNextShellStarted
@@ -2914,11 +2940,13 @@ export type V2Event =
   | MessagePartUpdated
   | MessagePartRemoved
   | SessionNextApprovalChanged
+  | SessionNextInstructionsChanged
   | SessionNextAgentSwitched
   | SessionNextModelSwitched
   | SessionNextMoved
   | SessionNextPrompted
   | SessionNextPromptAdmitted
+  | SessionNextCommandPrepared
   | SessionNextContextUpdated
   | SessionNextSynthetic
   | SessionNextShellStarted
@@ -3114,6 +3142,13 @@ export type PromptFileAttachment = {
 export type PromptAgentAttachment = {
   name: string
   source?: PromptSource
+}
+
+export type SessionInputPreparation = {
+  command: string
+  status: "pending" | "running" | "completed" | "interrupted" | "failed"
+  text?: string
+  error?: string
 }
 
 export type ModelCost = {
@@ -3413,6 +3448,22 @@ export type SyncEventSessionNextApprovalChanged = {
   }
 }
 
+export type SyncEventSessionNextInstructionsChanged = {
+  type: "sync"
+  id: string
+  syncEvent: {
+    type: "session.next.instructions.changed.1"
+    id: string
+    seq: number
+    aggregateID: string
+    data: {
+      timestamp: number
+      sessionID: string
+      instructions: string
+    }
+  }
+}
+
 export type SyncEventSessionNextAgentSwitched = {
   type: "sync"
   id: string
@@ -3496,6 +3547,24 @@ export type SyncEventSessionNextPromptAdmitted = {
       messageID: string
       prompt: Prompt
       delivery: "steer" | "queue"
+      preparation?: SessionInputPreparation
+    }
+  }
+}
+
+export type SyncEventSessionNextCommandPrepared = {
+  type: "sync"
+  id: string
+  syncEvent: {
+    type: "session.next.command.prepared.1"
+    id: string
+    seq: number
+    aggregateID: string
+    data: {
+      timestamp: number
+      sessionID: string
+      messageID: string
+      preparation: SessionInputPreparation
     }
   }
 }
@@ -4072,6 +4141,7 @@ export type SessionV2Info = {
   }
   title: string
   approvalMode?: "default" | "ask" | "auto" | "full"
+  instructions?: string
   location: LocationRef
   subpath?: string
   revert?: RevertState
@@ -4092,6 +4162,19 @@ export type SessionInputAdmitted = {
   delivery: "steer" | "queue"
   timeCreated: number
   promotedSeq?: number
+  preparation?: SessionInputPreparation
+}
+
+export type SessionInputTask = {
+  sessionID: string
+  parentID: string
+  contextID: string
+  inputID: string
+  status: "pending" | "running" | "completed" | "interrupted" | "failed"
+  attempt: number
+  output: string
+  error: string
+  resultInputID: string
 }
 
 export type SessionHealthInfo = {
@@ -4376,6 +4459,25 @@ export type SessionNextApprovalChanged = {
   }
 }
 
+export type SessionNextInstructionsChanged = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.instructions.changed"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    timestamp: number
+    sessionID: string
+    instructions: string
+  }
+}
+
 export type SessionNextAgentSwitched = {
   id: string
   metadata?: {
@@ -4475,6 +4577,27 @@ export type SessionNextPromptAdmitted = {
     messageID: string
     prompt: Prompt
     delivery: "steer" | "queue"
+    preparation?: SessionInputPreparation
+  }
+}
+
+export type SessionNextCommandPrepared = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.command.prepared"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    timestamp: number
+    sessionID: string
+    messageID: string
+    preparation: SessionInputPreparation
   }
 }
 
@@ -6498,6 +6621,16 @@ export type EventSessionNextApprovalChanged = {
   }
 }
 
+export type EventSessionNextInstructionsChanged = {
+  id: string
+  type: "session.next.instructions.changed"
+  properties: {
+    timestamp: number
+    sessionID: string
+    instructions: string
+  }
+}
+
 export type EventSessionNextAgentSwitched = {
   id: string
   type: "session.next.agent.switched"
@@ -6552,6 +6685,18 @@ export type EventSessionNextPromptAdmitted = {
     messageID: string
     prompt: Prompt
     delivery: "steer" | "queue"
+    preparation?: SessionInputPreparation
+  }
+}
+
+export type EventSessionNextCommandPrepared = {
+  id: string
+  type: "session.next.command.prepared"
+  properties: {
+    timestamp: number
+    sessionID: string
+    messageID: string
+    preparation: SessionInputPreparation
   }
 }
 
@@ -8147,7 +8292,7 @@ export type ExperimentalSessionListData = {
     workspace?: string
     roots?: boolean | "true" | "false"
     start?: number
-    cursor?: number
+    cursor?: number | string
     search?: string
     limit?: number
     archived?: boolean | "true" | "false"
@@ -8157,9 +8302,9 @@ export type ExperimentalSessionListData = {
 
 export type ExperimentalSessionListErrors = {
   /**
-   * Bad request
+   * BadRequest | InvalidRequestError
    */
-  400: BadRequestError
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
   /**
    * ConflictError
    */
@@ -12278,6 +12423,49 @@ export type ServerSessionSessionSetApprovalResponses = {
 export type ServerSessionSessionSetApprovalResponse =
   ServerSessionSessionSetApprovalResponses[keyof ServerSessionSessionSetApprovalResponses]
 
+export type ServerSessionSessionSetInstructionsData = {
+  body: {
+    instructions: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: never
+  url: "/api/session/{sessionID}/instructions"
+}
+
+export type ServerSessionSessionSetInstructionsErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * SessionNotFoundError
+   */
+  404: SessionNotFoundError
+  /**
+   * ConflictError
+   */
+  409: ConflictError
+}
+
+export type ServerSessionSessionSetInstructionsError =
+  ServerSessionSessionSetInstructionsErrors[keyof ServerSessionSessionSetInstructionsErrors]
+
+export type ServerSessionSessionSetInstructionsResponses = {
+  /**
+   * <No Content>
+   */
+  204: void
+}
+
+export type ServerSessionSessionSetInstructionsResponse =
+  ServerSessionSessionSetInstructionsResponses[keyof ServerSessionSessionSetInstructionsResponses]
+
 export type V2SessionSwitchAgentData = {
   body: {
     agent: string
@@ -12359,6 +12547,101 @@ export type V2SessionSwitchModelResponses = {
 }
 
 export type V2SessionSwitchModelResponse = V2SessionSwitchModelResponses[keyof V2SessionSwitchModelResponses]
+
+export type ServerSessionSessionCommandData = {
+  body: {
+    id?: string
+    command: string
+    arguments?: string
+    independent?: boolean
+    agent?: string
+    model?: ModelRef
+    files?: Array<PromptInputFileAttachment>
+    delivery?: "steer" | "queue"
+    resume?: boolean
+  }
+  path: {
+    sessionID: string
+  }
+  query?: never
+  url: "/api/session/{sessionID}/command"
+}
+
+export type ServerSessionSessionCommandErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * SessionNotFoundError
+   */
+  404: SessionNotFoundError
+  /**
+   * ConflictError
+   */
+  409: ConflictError
+}
+
+export type ServerSessionSessionCommandError =
+  ServerSessionSessionCommandErrors[keyof ServerSessionSessionCommandErrors]
+
+export type ServerSessionSessionCommandResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: SessionInputAdmitted
+  }
+}
+
+export type ServerSessionSessionCommandResponse =
+  ServerSessionSessionCommandResponses[keyof ServerSessionSessionCommandResponses]
+
+export type ServerSessionSessionTasksData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: never
+  url: "/api/session/{sessionID}/tasks"
+}
+
+export type ServerSessionSessionTasksErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * SessionNotFoundError
+   */
+  404: SessionNotFoundError
+  /**
+   * ConflictError
+   */
+  409: ConflictError
+}
+
+export type ServerSessionSessionTasksError = ServerSessionSessionTasksErrors[keyof ServerSessionSessionTasksErrors]
+
+export type ServerSessionSessionTasksResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: Array<SessionInputTask>
+  }
+}
+
+export type ServerSessionSessionTasksResponse =
+  ServerSessionSessionTasksResponses[keyof ServerSessionSessionTasksResponses]
 
 export type V2SessionPromptData = {
   body: {

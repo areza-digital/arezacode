@@ -35,7 +35,13 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     const handlers = new Set<(event: GlobalEvent) => void>()
     const emitter = {
       emit(_type: "event", event: GlobalEvent) {
-        for (const handler of handlers) handler(event)
+        for (const handler of handlers) {
+          try {
+            handler(event)
+          } catch (error) {
+            console.error("tui event handler failed", error)
+          }
+        }
       },
       on(_type: "event", handler: (event: GlobalEvent) => void) {
         handlers.add(handler)
@@ -88,20 +94,25 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
         while (true) {
           if (abort.signal.aborted || ctrl.signal.aborted) break
 
-          const events = await sdk.global.event({
-            signal: ctrl.signal,
-            sseMaxRetryAttempts: 0,
-          })
+          try {
+            const events = await sdk.global.event({
+              signal: ctrl.signal,
+              sseMaxRetryAttempts: 0,
+            })
 
-          if (Flag.OPENCODE_EXPERIMENTAL_WORKSPACES) {
-            // Start syncing workspaces, it's important to do this after
-            // we've started listening to events
-            await sdk.sync.start().catch(() => {})
-          }
+            if (Flag.OPENCODE_EXPERIMENTAL_WORKSPACES) {
+              // Start syncing workspaces, it's important to do this after
+              // we've started listening to events
+              await sdk.sync.start().catch(() => {})
+            }
 
-          for await (const event of events.stream) {
-            if (ctrl.signal.aborted) break
-            handleEvent(event)
+            for await (const event of events.stream) {
+              if (ctrl.signal.aborted) break
+              attempt = 0
+              handleEvent(event)
+            }
+          } catch (error) {
+            if (!abort.signal.aborted && !ctrl.signal.aborted) console.error("tui event stream failed", error)
           }
 
           if (timer) clearTimeout(timer)
@@ -113,13 +124,15 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
           const backoff = Math.min(retryDelay * 2 ** (attempt - 1), maxRetryDelay)
           await new Promise((resolve) => setTimeout(resolve, backoff))
         }
-      })().catch(() => {})
+      })().catch((error) => console.error("tui event stream stopped", error))
     }
 
+    let unsubscribe: (() => void) | undefined
     onMount(async () => {
       if (props.events) {
         const unsub = await props.events.subscribe(handleEvent)
-        onCleanup(unsub)
+        if (abort.signal.aborted) return unsub()
+        unsubscribe = unsub
 
         if (Flag.OPENCODE_EXPERIMENTAL_WORKSPACES) {
           // Start syncing workspaces, it's important to do this after
@@ -134,6 +147,7 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     onCleanup(() => {
       abort.abort()
       sse?.abort()
+      unsubscribe?.()
       if (timer) clearTimeout(timer)
       handlers.clear()
     })

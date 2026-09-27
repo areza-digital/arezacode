@@ -3,17 +3,68 @@ import { describe, expect } from "bun:test"
 import * as fs from "fs/promises"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect } from "effect"
-import { InstanceBootstrap } from "../../src/project/bootstrap"
+import { Effect, Layer } from "effect"
+import { InstanceBootstrap } from "../../src/project/bootstrap-service"
 import { InstanceStore } from "../../src/project/instance-store"
 import { Worktree } from "../../src/worktree"
+import { Project } from "../../src/project/project"
+import { InstanceState } from "../../src/effect/instance-state"
 import { TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
-const it = testEffect(LayerNode.compile(Worktree.node, [[InstanceStore.bootstrapNode, InstanceBootstrap.node]]))
+const it = testEffect(
+  LayerNode.compile(LayerNode.group([Worktree.node, Project.node]), [
+    [
+      InstanceStore.bootstrapNode,
+      Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void })),
+    ],
+  ]),
+)
 const wintest = process.platform === "win32" ? it.instance : it.instance.skip
 
 describe("Worktree.remove", () => {
+  it.instance(
+    "rejects unrelated directories and the primary worktree without deleting contents",
+    () =>
+      Effect.gen(function* () {
+        const root = (yield* TestInstance).directory
+        const svc = yield* Worktree.Service
+        const unrelated = path.join(root, "unrelated")
+        yield* Effect.promise(() => fs.mkdir(unrelated))
+        yield* Effect.promise(() => fs.writeFile(path.join(unrelated, "keep.txt"), "keep"))
+        for (const directory of [unrelated, root]) {
+          expect(yield* svc.remove({ directory }).pipe(Effect.flip)).toBeInstanceOf(Worktree.RemoveFailedError)
+          expect(yield* Effect.promise(() => fs.readFile(path.join(unrelated, "keep.txt"), "utf8"))).toBe("keep")
+        }
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "cleans a detached worktree directory only when project ownership is recorded",
+    () =>
+      Effect.gen(function* () {
+        const root = (yield* TestInstance).directory
+        const svc = yield* Worktree.Service
+        const project = yield* Project.Service
+        const ctx = yield* InstanceState.context
+        const directory = path.join(root, "detached")
+        yield* Effect.promise(() => fs.mkdir(directory))
+        yield* Effect.promise(() => fs.writeFile(path.join(directory, "leftover.txt"), "leftover"))
+        yield* project.addSandbox(ctx.project.id, directory)
+        expect(yield* svc.remove({ directory })).toBe(true)
+        expect(
+          yield* Effect.promise(() =>
+            fs.stat(directory).then(
+              () => true,
+              () => false,
+            ),
+          ),
+        ).toBe(false)
+      }),
+    { git: true },
+  )
+
   it.instance(
     "continues when git remove exits non-zero after detaching",
     () =>

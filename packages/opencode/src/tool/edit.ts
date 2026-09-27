@@ -5,6 +5,8 @@
 
 import * as path from "path"
 import { Effect, Schema, Semaphore } from "effect"
+import { Jev } from "@opencode-ai/core/jev"
+import { FileMutation } from "@opencode-ai/core/file-mutation"
 import * as Tool from "./tool"
 import { LSP } from "@/lsp/lsp"
 import { createTwoFilesPatch, diffLines } from "diff"
@@ -60,6 +62,7 @@ export const EditTool = Tool.define(
   Effect.gen(function* () {
     const lsp = yield* LSP.Service
     const afs = yield* FSUtil.Service
+    const mutation = yield* FileMutation.Service
     const format = yield* Format.Service
     const events = yield* EventV2Bridge.Service
 
@@ -81,6 +84,10 @@ export const EditTool = Tool.define(
             ? params.filePath
             : path.join(instance.directory, params.filePath)
           yield* assertExternalDirectoryEffect(ctx, filePath)
+          const target = {
+            canonical: yield* afs.resolve(filePath),
+            resource: path.relative(instance.worktree, filePath),
+          }
 
           let diff = ""
           let contentOld = ""
@@ -108,7 +115,10 @@ export const EditTool = Tool.define(
                     diff,
                   },
                 })
-                yield* afs.writeWithDirs(filePath, Bom.join(contentNew, desiredBom))
+                yield* Effect.promise(() => Jev.guardChange(ctx.sessionID, filePath, contentOld, contentNew))
+                yield* mutation.applyIfUnchanged([
+                  { target, expected: undefined, content: Bom.join(contentNew, desiredBom) },
+                ])
                 if (yield* format.file(filePath)) {
                   contentNew = yield* Bom.syncFile(afs, filePath, desiredBom)
                 }
@@ -152,7 +162,12 @@ export const EditTool = Tool.define(
                 },
               })
 
-              yield* afs.writeWithDirs(filePath, Bom.join(contentNew, desiredBom))
+              yield* Effect.promise(() => Jev.guardChange(ctx.sessionID, filePath, contentOld, contentNew))
+              yield* mutation.writeIfUnchanged({
+                target,
+                expected: source.content,
+                content: Bom.join(contentNew, desiredBom),
+              })
               if (yield* format.file(filePath)) {
                 contentNew = yield* Bom.syncFile(afs, filePath, desiredBom)
               }

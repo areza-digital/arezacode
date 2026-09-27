@@ -124,6 +124,36 @@ describe("session.retry.delay", () => {
     }),
   )
 
+  it.instance("policy stops retrying when a provider turn becomes unsafe to replay", () =>
+    Effect.gen(function* () {
+      const error = apiError({ "retry-after-ms": "0" })
+      let attempts = 0
+      let retries = 0
+      let retrySafe = true
+      const result = yield* Effect.suspend(() => {
+        attempts++
+        if (attempts === 2) retrySafe = false
+        return Effect.fail(error)
+      }).pipe(
+        Effect.retry(
+          SessionRetry.policy({
+            provider: "test",
+            parse: Schema.decodeUnknownSync(SessionV1.APIError.Schema),
+            canRetry: () => retrySafe,
+            set: () =>
+              Effect.sync(() => {
+                retries++
+              }),
+          }),
+        ),
+        Effect.flip,
+      )
+      expect(result).toBe(error)
+      expect(attempts).toBe(2)
+      expect(retries).toBe(1)
+    }),
+  )
+
   it.instance("policy stops after five retries", () =>
     Effect.gen(function* () {
       const attempts: number[] = []

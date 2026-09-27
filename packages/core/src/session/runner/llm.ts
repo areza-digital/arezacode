@@ -248,24 +248,53 @@ const layer = Layer.effect(
       const entries = yield* SessionHistory.entriesForRunner(db, session.id, system.baselineSeq)
       const original = entries.map((entry) => entry.message)
       const notice = yield* Effect.promise(() => automations.get(session.id)?.before(original) ?? Promise.resolve(""))
-      const context = yield* Effect.forEach(original, (message) => Effect.gen(function* () {
-        if (message.type !== "user" || !message.files?.some((file) => Document.documentType(file.name ?? file.uri, file.mime))) return message
-        const documents = message.files.filter((file) => Document.documentType(file.name ?? file.uri, file.mime))
-        const texts = yield* Effect.forEach(documents, (file) => Effect.gen(function* () {
-          if (file.uri.startsWith("file:")) {
-            const absolute = yield* Effect.promise(() => realpath(fileURLToPath(file.uri)))
-            const relative = path.relative(location.directory, absolute)
-            if (relative.startsWith("..") || path.isAbsolute(relative)) yield* permissions.assert({
-              sessionID: session.id, agent: agent.id, action: "external_directory", resources: [path.dirname(absolute)], save: [],
-            }).pipe(Effect.orDie)
-            yield* permissions.assert({ sessionID: session.id, agent: agent.id, action: "read", resources: [absolute], save: [] }).pipe(Effect.orDie)
-          }
-          return yield* Effect.tryPromise((signal) => Document.attachment(file, signal, session.id)).pipe(
-            Effect.catch(() => Effect.succeed(`Document conversion failed: ${file.name ?? "attachment"}. No content was extracted.`)),
+      const context = yield* Effect.forEach(entries, (entry) =>
+        Effect.gen(function* () {
+          const message = entry.message
+          if (
+            message.type !== "user" ||
+            !message.files?.some((file) => Document.documentType(file.name ?? file.uri, file.mime))
           )
-        }))
-        return { ...message, text: [message.text, ...texts].join("\n\n"), files: message.files.filter((file) => !documents.includes(file)) }
-      }))
+            return entry
+          const documents = message.files.filter((file) => Document.documentType(file.name ?? file.uri, file.mime))
+          const texts = yield* Effect.forEach(documents, (file) =>
+            Effect.gen(function* () {
+              if (file.uri.startsWith("file:")) {
+                const absolute = yield* Effect.promise(() => realpath(fileURLToPath(file.uri)))
+                const relative = path.relative(location.directory, absolute)
+                if (relative.startsWith("..") || path.isAbsolute(relative))
+                  yield* permissions.assert({
+                    sessionID: session.id,
+                    agent: agent.id,
+                    action: "external_directory",
+                    resources: [path.dirname(absolute)],
+                    save: [],
+                  }).pipe(Effect.orDie)
+                yield* permissions.assert({
+                  sessionID: session.id,
+                  agent: agent.id,
+                  action: "read",
+                  resources: [absolute],
+                  save: [],
+                }).pipe(Effect.orDie)
+              }
+              return yield* Effect.tryPromise((signal) => Document.attachment(file, signal, session.id)).pipe(
+                Effect.catch(() =>
+                  Effect.succeed(`Document conversion failed: ${file.name ?? "attachment"}. No content was extracted.`),
+                ),
+              )
+            }),
+          )
+          return {
+            ...entry,
+            message: {
+              ...message,
+              text: [message.text, ...texts].join("\n\n"),
+              files: message.files.filter((file) => !documents.includes(file)),
+            },
+          }
+        }),
+      )
       const isLastStep = agent.info?.steps !== undefined && currentStep >= agent.info.steps
       const toolMaterialization = isLastStep ? undefined : yield* tools.materialize(agent.info?.permissions)
       const promptCacheKey = createHash("sha256").update(JSON.stringify([location.directory, location.workspaceID, model.provider, model.id, agent.info?.system, system.baseline])).digest("hex")
@@ -282,15 +311,37 @@ const layer = Layer.effect(
         system: [agent.info?.system, system.baseline]
           .filter((part): part is string => part !== undefined && part.length > 0)
           .map(SystemPart.make),
-        messages: [...toLLMMessages(context, model), ...(notice ? [Message.user(notice)] : []), ...(isLastStep ? [Message.assistant(MAX_STEPS_PROMPT)] : [])],
+        messages: [
+          ...toLLMMessages(context.map((entry) => entry.message), model),
+          ...(notice ? [Message.user(notice)] : []),
+          ...(isLastStep ? [Message.assistant(MAX_STEPS_PROMPT)] : []),
+        ],
         tools: toolMaterialization?.definitions.map((tool) => Jev.quickEdit(session.id) && Jev.needsQuickEditReason(tool.name) ? new ToolDefinition({
           ...tool,
           inputSchema: { ...tool.inputSchema, properties: { ...(tool.inputSchema.properties && typeof tool.inputSchema.properties === "object" ? tool.inputSchema.properties : {}), quickEditReason: Jev.quickEditReason } },
         }) : tool) ?? [],
         toolChoice: isLastStep ? "none" : undefined,
       })
-      if (yield* compaction.compactIfNeeded({ sessionID: session.id, entries, model, request }))
-        return yield* Effect.die(continueAfterCompaction(currentStep))
+      const prices = yield* Effect.serviceOption(Catalog.Service).pipe(
+        Effect.flatMap((catalog) =>
+          Option.isSome(catalog)
+            ? catalog.value.model.available().pipe(
+                Effect.map(
+                  (items) =>
+                    items.find((item) => String(item.providerID) === model.provider && String(item.api.id) === model.id)?.cost,
+                ),
+              )
+            : Effect.succeed(undefined),
+        ),
+      )
+      const compactionInput = {
+        sessionID: session.id,
+        entries: context,
+        model,
+        request,
+        prices,
+      }
+      if (yield* compaction.compactIfNeeded(compactionInput)) return yield* Effect.die(continueAfterCompaction(currentStep))
       const startSnapshot = yield* snapshots.capture()
       let timing: NonNullable<SessionMessage.Usage["timing"]> = { startedAt: Date.now(), retries: [] }
       const publisher = createLLMEventPublisher(events, {
@@ -303,9 +354,7 @@ const layer = Layer.effect(
         },
         snapshot: startSnapshot,
         timing: () => timing,
-        prices: yield* Effect.serviceOption(Catalog.Service).pipe(Effect.flatMap((catalog) => Option.isSome(catalog)
-          ? catalog.value.model.available().pipe(Effect.map((items) => items.find((item) => String(item.providerID) === model.provider && String(item.api.id) === model.id)?.cost))
-          : Effect.succeed(undefined))),
+        prices,
         request: {
           systemCharacters: JSON.stringify(request.system).length,
           messageCharacters: JSON.stringify(request.messages).length,
@@ -389,7 +438,7 @@ const layer = Layer.effect(
             recoverOverflow &&
             !publisher.hasAssistantStarted() &&
             isContextOverflowFailure(overflowFailure ?? failure) &&
-            (yield* restore(recoverOverflow({ sessionID: session.id, entries, model, request })))
+            (yield* restore(recoverOverflow(compactionInput)))
           )
             return yield* Effect.die(continueAfterOverflowCompaction(currentStep))
           if (overflowFailure) yield* publish(overflowFailure)
@@ -449,9 +498,14 @@ const layer = Layer.effect(
           if (stream._tag === "Failure") return yield* Effect.failCause(stream.cause)
           if (settled._tag === "Failure" && Cause.hasInterrupts(settled.cause))
             return yield* Effect.failCause(settled.cause)
-          if (needsContinuation) {
+          if (!publisher.hasProviderError()) {
             const context = yield* getContext(session.id)
             yield* restore(Effect.promise((signal) => automations.get(session.id)?.after(context, signal) ?? Promise.resolve()))
+            if (!needsContinuation) {
+              const verification = yield* restore(Effect.promise(() => automations.get(session.id)?.complete(!isLastStep) ?? Promise.resolve(undefined)))
+              if (verification?.status === "retry") needsContinuation = true
+              if (verification?.status === "blocked") yield* withPublication(publisher.failAssistant(verification.notice))
+            }
           }
           return { needsContinuation: !publisher.hasProviderError() && needsContinuation, step: currentStep }
         }),

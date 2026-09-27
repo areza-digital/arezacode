@@ -1,4 +1,5 @@
 import { EventV2 } from "@opencode-ai/core/event"
+import { PublicEventManifest } from "@opencode-ai/core/public-event-manifest"
 import { OpenCodeEvent } from "@opencode-ai/protocol/groups/event"
 import { Effect, Schema, Stream } from "effect"
 import { HttpServerResponse } from "effect/unstable/http"
@@ -31,7 +32,9 @@ export const EventHandler = HttpApiBuilder.group(Api, "server.event", (handlers)
           Effect.gen(function* () {
             // Acquiring the bounded stream installs its listener before readiness is observable.
             const live = yield* EventV2.allBounded(events, subscriberCapacity)
-            return Stream.make(connected).pipe(Stream.concat(live))
+            return Stream.make(connected).pipe(
+              Stream.concat(live.pipe(Stream.filter((event) => PublicEventManifest.Latest.has(event.type)))),
+            )
           }),
         ).pipe(Stream.map(eventData), Stream.pipeThroughChannel(Sse.encode()))
         const heartbeat = Stream.tick("15 seconds").pipe(Stream.map(() => ": heartbeat\n\n"))

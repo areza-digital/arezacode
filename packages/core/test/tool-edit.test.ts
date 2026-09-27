@@ -113,6 +113,33 @@ const call = (input: typeof EditTool.Input.Type, id = "call-edit") => ({
 const it = testEffect(Layer.empty)
 
 describe("EditTool", () => {
+  it.live("writes replacement metacharacters literally in single and replace-all edits", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        return withTool(tmp.path, (registry) =>
+          Effect.gen(function* () {
+            for (const replaceAll of [false, true]) {
+              const target = path.join(tmp.path, "literal.txt")
+              const newString = "$& $$ $` $' $1"
+              yield* Effect.promise(() => fs.writeFile(target, replaceAll ? "old\nold" : "old"))
+              const result = yield* executeTool(
+                registry,
+                call({ path: "literal.txt", oldString: "old", newString, replaceAll }),
+              )
+              expect(result.type).toBe("text")
+              expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe(
+                replaceAll ? `${newString}\n${newString}` : newString,
+              )
+            }
+          }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
   it.live("registers and replaces relative exact text through FileMutation once", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),

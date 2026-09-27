@@ -16,6 +16,8 @@ import type { JSONSchema7 } from "@ai-sdk/provider"
 import { SessionCompaction } from "./compaction"
 import { SystemPrompt } from "./system"
 import { Jev } from "@opencode-ai/core/jev"
+import { AutomaticChecks } from "@opencode-ai/core/automatic-checks"
+import { UiVerification } from "@opencode-ai/core/ui-verification"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
 import { MAX_STEPS_PROMPT } from "@opencode-ai/core/session/runner/max-steps"
@@ -1118,6 +1120,9 @@ const layer = Layer.effect(
         const ctx = yield* InstanceState.context
         let structured: unknown
         let step = 0
+        const verificationBaseline = yield* Effect.promise(() => AutomaticChecks.files(ctx.directory).catch(() => undefined))
+        let verificationSnapshot = verificationBaseline
+        const verification = UiVerification.create(sessionID, verificationBaseline)
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
@@ -1127,6 +1132,7 @@ const layer = Layer.effect(
           let msgs = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
             Effect.provideService(Database.Service, database),
           )
+          verification.observe(verificationSnapshot, uiVerificationContext(msgs))
 
           const { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = MessageV2.latest(msgs)
 
@@ -1147,6 +1153,7 @@ const layer = Layer.effect(
             lastAssistant?.finish &&
             !["tool-calls", "unknown"].includes(lastAssistant.finish) &&
             !hasToolCalls &&
+            !verification.guidance() &&
             lastAssistant.parentID === lastUser.id
           ) {
             const orphan = lastAssistantMsg?.parts.find(
@@ -1257,6 +1264,8 @@ const layer = Layer.effect(
             const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
             const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
             const promptOps = yield* ops()
+            const requests = msgs.filter((message) => message.info.role === "user").map((message) => message.parts.flatMap((part) => part.type === "text" && !part.synthetic ? [part.text] : []).join("\n"))
+            Jev.remember(sessionID, requests.at(-1) ?? "", requests)
             const taskGuidance = yield* Effect.promise(() => Jev.guidance(sessionID, lastUser.id, msgs.filter((message) => message.info.role === "assistant" && message.info.parentID === lastUser.id).length))
 
             const tools = yield* SessionTools.resolve({
@@ -1306,6 +1315,7 @@ const layer = Layer.effect(
                 ? [`Session custom instructions:\n${preferences.metadata.instructions}`]
                 : []),
               taskGuidance,
+              verification.guidance(),
               ...(mcpInstructions ? [mcpInstructions] : []),
               ...(skills ? [skills] : []),
             ]
@@ -1326,6 +1336,19 @@ const layer = Layer.effect(
               model,
               toolChoice: format.type === "json_schema" ? "required" : undefined,
             })
+            const updated = yield* MessageV2.filterCompactedEffect(sessionID).pipe(Effect.provideService(Database.Service, database))
+            verificationSnapshot = yield* Effect.promise(() => AutomaticChecks.files(ctx.directory, verificationBaseline?.revision).catch(() => undefined))
+            verification.observe(verificationSnapshot, uiVerificationContext(updated))
+            if (!handle.message.error && handle.message.finish !== "content-filter" && (result === "stop" || structured !== undefined || handle.message.finish && !["tool-calls", "unknown"].includes(handle.message.finish) && !updated.find((message) => message.info.id === handle.message.id)?.parts.some((part) => part.type === "tool"))) {
+              const checked = yield* Effect.promise(() => verification.check(!isLastStep))
+              if (checked.status === "retry") { structured = undefined; return "continue" as const }
+              if (checked.status === "blocked") {
+                handle.message.error = new NamedError.Unknown({ message: checked.notice }).toObject()
+                yield* sessions.updateMessage(handle.message)
+                yield* events.publish(Session.Event.Error, { sessionID, error: handle.message.error })
+                return "break" as const
+              }
+            }
 
             if (structured !== undefined) {
               handle.message.structured = structured
@@ -1649,5 +1672,19 @@ export const node = LayerNode.make({
     Database.node,
   ],
 })
+
+function uiVerificationContext(messages: readonly SessionV1.WithParts[]): UiVerification.Context {
+  return {
+    promptID: messages.findLast((message) => message.info.role === "user")?.info.id ?? "",
+    requests: messages.filter((message) => message.info.role === "user").map((message) => message.parts.flatMap((part) => part.type === "text" && !part.synthetic ? [part.text] : []).join("\n")),
+    response: messages.findLast((message) => message.info.role === "assistant")?.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n") ?? "",
+    tools: messages.flatMap((message) => message.parts.flatMap((part) => part.type === "tool" && (part.state.status === "completed" || part.state.status === "error") ? [{
+      id: part.callID, tool: part.tool, input: JSON.stringify(part.state.input),
+      output: part.state.status === "completed" ? part.state.output : part.state.error,
+      visual: part.state.status === "completed" && Boolean(part.state.attachments?.some((attachment) => attachment.mime.startsWith("image/"))),
+      ok: part.state.status === "completed",
+    }] : [])),
+  }
+}
 
 export * as SessionPrompt from "./prompt"

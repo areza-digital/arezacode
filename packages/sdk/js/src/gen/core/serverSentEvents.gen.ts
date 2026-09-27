@@ -99,6 +99,8 @@ export const createSseClient = <TData = unknown>({
       }
 
       try {
+        const controller = new AbortController()
+        const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal
         const response = await fetch(url, { ...options, headers, signal })
 
         if (!response.ok) throw new Error(`SSE failed: ${response.status} ${response.statusText}`)
@@ -185,7 +187,13 @@ export const createSseClient = <TData = unknown>({
           }
         } finally {
           signal.removeEventListener("abort", abortHandler)
-          reader.releaseLock()
+          controller.abort()
+          try {
+            await reader.cancel()
+          } catch {
+          } finally {
+            reader.releaseLock()
+          }
         }
 
         break // exit loop on normal completion

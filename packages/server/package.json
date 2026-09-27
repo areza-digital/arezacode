@@ -9,6 +9,7 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
+    "test": "bun test --timeout 30000 ./test",
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {

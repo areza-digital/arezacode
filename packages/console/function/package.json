@@ -6,6 +6,7 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
+    "test": "bun --no-env-file test ./src --only-failures",
     "typecheck": "tsgo --noEmit"
   },
   "devDependencies": {

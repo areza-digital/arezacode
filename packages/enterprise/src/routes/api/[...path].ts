@@ -110,8 +110,13 @@ app
     validator("param", z.object({ shareID: z.string() })),
     async (c) => {
       const { shareID } = c.req.valid("param")
-      c.header("Cache-Control", "public, max-age=30, s-maxage=300, stale-while-revalidate=86400")
-      return c.json(await Share.data(shareID))
+      c.header("Cache-Control", "no-store")
+      return Share.data(shareID)
+        .then((data) => c.json(data))
+        .catch((error) => {
+          if (error instanceof Share.Errors.NotFound) return c.json({ error: "Share not found" }, 404)
+          throw error
+        })
     },
   )
   .delete(

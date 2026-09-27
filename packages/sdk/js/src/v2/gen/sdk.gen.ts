@@ -145,6 +145,7 @@ import type {
   ProjectUpdateErrors,
   ProjectUpdateResponses,
   PromptInput,
+  PromptInputFileAttachment,
   ProviderAuthErrors,
   ProviderAuthResponses,
   ProviderListErrors,
@@ -181,8 +182,14 @@ import type {
   ServerIntegrationIntegrationToolsActionResponses,
   ServerIntegrationIntegrationToolsListErrors,
   ServerIntegrationIntegrationToolsListResponses,
+  ServerSessionSessionCommandErrors,
+  ServerSessionSessionCommandResponses,
   ServerSessionSessionSetApprovalErrors,
   ServerSessionSessionSetApprovalResponses,
+  ServerSessionSessionSetInstructionsErrors,
+  ServerSessionSessionSetInstructionsResponses,
+  ServerSessionSessionTasksErrors,
+  ServerSessionSessionTasksResponses,
   SessionAbortErrors,
   SessionAbortResponses,
   SessionChildrenErrors,
@@ -838,7 +845,7 @@ export class Session extends HeyApiClient {
       workspace?: string
       roots?: boolean | "true" | "false"
       start?: number
-      cursor?: number
+      cursor?: number | string
       search?: string
       limit?: number
       archived?: boolean | "true" | "false"
@@ -7322,6 +7329,108 @@ export class Session4 extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  public setInstructions<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      instructions?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "body", key: "instructions" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      ServerSessionSessionSetInstructionsResponses,
+      ServerSessionSessionSetInstructionsErrors,
+      ThrowOnError
+    >({
+      url: "/api/session/{sessionID}/instructions",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public command<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      id?: string
+      command?: string
+      arguments?: string
+      independent?: boolean
+      agent?: string
+      model?: ModelRef
+      files?: Array<PromptInputFileAttachment>
+      delivery?: "steer" | "queue"
+      resume?: boolean
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "body", key: "id" },
+            { in: "body", key: "command" },
+            { in: "body", key: "arguments" },
+            { in: "body", key: "independent" },
+            { in: "body", key: "agent" },
+            { in: "body", key: "model" },
+            { in: "body", key: "files" },
+            { in: "body", key: "delivery" },
+            { in: "body", key: "resume" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      ServerSessionSessionCommandResponses,
+      ServerSessionSessionCommandErrors,
+      ThrowOnError
+    >({
+      url: "/api/session/{sessionID}/command",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public tasks<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "sessionID" }] }])
+    return (options?.client ?? this.client).get<
+      ServerSessionSessionTasksResponses,
+      ServerSessionSessionTasksErrors,
+      ThrowOnError
+    >({
+      url: "/api/session/{sessionID}/tasks",
+      ...options,
+      ...params,
     })
   }
 }

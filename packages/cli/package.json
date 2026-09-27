@@ -11,6 +11,7 @@
     "bin"
   ],
   "scripts": {
+    "test": "bun test ./src --only-failures",
     "build": "bun run script/build.ts",
     "dev": "bun run src/index.ts",
     "typecheck": "tsgo --noEmit"

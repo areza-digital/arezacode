@@ -96,6 +96,7 @@ export const PaymentTable = mysqlTable(
     invoiceID: varchar("invoice_id", { length: 255 }),
     paymentID: varchar("payment_id", { length: 255 }),
     amount: bigint("amount", { mode: "number" }).notNull(),
+    refundedAmount: bigint("refunded_amount", { mode: "number" }).notNull().default(0),
     timeRefunded: utc("time_refunded"),
     enrichment: json("enrichment").$type<
       | {
@@ -109,6 +110,17 @@ export const PaymentTable = mysqlTable(
     >(),
   },
   (table) => [...workspaceIndexes(table)],
+)
+
+export const BillingEventTable = mysqlTable(
+  "billing_event",
+  {
+    id: varchar({ length: 255 }).primaryKey(),
+    workspace_id: ulid("workspace_id").notNull(),
+    operation: varchar({ length: 255 }).notNull(),
+    time_created: utc("time_created").notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("workspace_operation").on(table.workspace_id, table.operation)],
 )
 
 export const UsageTable = mysqlTable(

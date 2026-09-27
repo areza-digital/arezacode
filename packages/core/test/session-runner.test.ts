@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, spyOn } from "bun:test"
+import { Document } from "@opencode-ai/core/document"
 import {
   LLMClient,
   LLMError,
@@ -1337,6 +1338,38 @@ describe("SessionRunnerLLM", () => {
         type: "compaction",
         summary: "## Objective\n- Preserve the updated task",
       })
+    }),
+  )
+
+  it.effect("retains materialized document content when compacting before its first provider turn", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      response = fragmentFixture("text", "text-earlier", ["Earlier answer"]).completeEvents
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Earlier context ".repeat(500) }), resume: false })
+      yield* session.resume(sessionID)
+      const document =
+        "Document: policy.pdf\nNever delete the customer records.\nFull converted document: /converted/policy.txt"
+      const conversion = spyOn(Document, "attachment").mockResolvedValue(document)
+      yield* Effect.addFinalizer(() => Effect.sync(() => conversion.mockRestore()))
+      currentModel = compactModel
+      requests.length = 0
+      responses = [
+        fragmentFixture("text", "text-summary", ["Earlier task summary"]).completeEvents,
+        fragmentFixture("text", "text-final", ["Document received"]).completeEvents,
+      ]
+      yield* session.prompt({
+        sessionID,
+        prompt: Prompt.make({
+          text: "Use this policy",
+          files: [{ uri: "data:application/pdf;base64,JVBERi0=", mime: "application/pdf", name: "policy.pdf" }],
+        }),
+        resume: false,
+      })
+      yield* session.resume(sessionID)
+      expect(requests).toHaveLength(2)
+      expect(userTexts(requests[1])[0]).toContain(document)
+      expect(conversion).toHaveBeenCalledTimes(1)
     }),
   )
 

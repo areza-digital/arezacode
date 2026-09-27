@@ -12,6 +12,7 @@ export namespace Share {
     id: z.string(),
     secret: z.string(),
     sessionID: z.string(),
+    revoked: z.boolean().optional(),
   })
   export type Info = z.infer<typeof Info>
 
@@ -116,26 +117,29 @@ export namespace Share {
 
   export const create = fn(z.object({ sessionID: z.string() }), async (body) => {
     const isTest = process.env.NODE_ENV === "test" || body.sessionID.startsWith("test_")
+    const id = (isTest ? "test_" : "") + body.sessionID.slice(-8)
+    const exists = await Storage.read<Info>(["share", id])
+    if (exists && !exists.revoked) throw new Errors.AlreadyExists(id)
     const info: Info = {
-      id: (isTest ? "test_" : "") + body.sessionID.slice(-8),
+      id: exists ? (isTest ? "test_" : "") + crypto.randomUUID() : id,
       sessionID: body.sessionID,
       secret: crypto.randomUUID(),
     }
-    const exists = await get(info.id)
-    if (exists) throw new Errors.AlreadyExists(info.id)
     await Promise.all([Storage.write(["share", info.id], info), writeSnapshot(info.id, [])])
     return info
   })
 
   export async function get(id: string) {
-    return Storage.read<Info>(["share", id])
+    const share = await Storage.read<Info>(["share", id])
+    return share?.revoked ? undefined : share
   }
 
   export const remove = fn(Info.pick({ id: true, secret: true }), async (body) => {
-    const share = await get(body.id)
+    const share = await Storage.read<Info>(["share", body.id])
     if (!share) throw new Errors.NotFound(body.id)
     if (share.secret !== body.secret) throw new Errors.InvalidSecret(body.id)
-    await Storage.remove(["share", body.id])
+    await Storage.write(["share", body.id], { ...share, revoked: true })
+    await Promise.all([Storage.remove(["share_snapshot", body.id]), Storage.remove(["share_compaction", body.id])])
     const groups = await Promise.all([
       Storage.list({ prefix: ["share_snapshot", body.id] }),
       Storage.list({ prefix: ["share_compaction", body.id] }),
@@ -148,7 +152,7 @@ export namespace Share {
   })
 
   export const removeAdmin = fn(Info.pick({ id: true }), async (body) => {
-    const share = await get(body.id)
+    const share = await Storage.read<Info>(["share", body.id])
     if (!share) throw new Errors.NotFound(body.id)
     await remove({ id: share.id, secret: share.secret })
   })
@@ -168,7 +172,10 @@ export namespace Share {
   )
 
   export async function data(shareID: string) {
-    return (await readSnapshot(shareID)) ?? legacy(shareID)
+    if (!(await get(shareID))) throw new Errors.NotFound(shareID)
+    const data = (await readSnapshot(shareID)) ?? (await legacy(shareID))
+    if (!(await get(shareID))) throw new Errors.NotFound(shareID)
+    return data
   }
 
   export const syncOld = fn(

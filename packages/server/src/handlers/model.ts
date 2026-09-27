@@ -1,4 +1,5 @@
 import { Catalog } from "@opencode-ai/core/catalog"
+import { SessionRunnerModel } from "@opencode-ai/core/session/runner/model"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Api } from "../api"
@@ -10,7 +11,9 @@ export const ModelHandler = HttpApiBuilder.group(Api, "server.model", (handlers)
       "model.list",
       Effect.fn(function* () {
         const catalog = yield* Catalog.Service
-        return yield* response(catalog.model.available())
+        return yield* response(
+          catalog.model.available().pipe(Effect.map((models) => models.filter(SessionRunnerModel.supported))),
+        )
       }),
     )
   }),

@@ -97,7 +97,11 @@ const layer = Layer.effect(
     const database = yield* Database.Service
 
     const create = Effect.fn("SessionProcessor.create")(function* (input: Input) {
-      yield* SessionHealth.recordModel(database.db, input.sessionID, { id: input.model.id, providerID: input.model.providerID, context: input.model.limit.context })
+      yield* SessionHealth.recordModel(database.db, input.sessionID, {
+        id: input.model.id,
+        providerID: input.model.providerID,
+        context: input.model.limit.context,
+      })
       // Pre-capture snapshot before the LLM stream starts. The AI SDK
       // may execute tools internally before emitting start-step events,
       // so capturing inside the event handler can be too late.
@@ -647,16 +651,44 @@ const layer = Layer.effect(
         })
         ctx.needsCompaction = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
+        let retrySafe = true
+        const tools = Object.fromEntries(
+          Object.entries(streamInput.tools).map(([name, tool]) => {
+            const execute = tool.execute
+            if (!execute) return [name, tool]
+            return [
+              name,
+              {
+                ...tool,
+                execute: (...args: Parameters<typeof execute>) => {
+                  retrySafe = false
+                  return execute(...args)
+                },
+              },
+            ]
+          }),
+        )
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
             ctx.currentText = undefined
             ctx.reasoningMap = {}
             yield* status.set(ctx.sessionID, { type: "busy" })
-            const stream = llm.stream(streamInput)
+            const stream = llm.stream({ ...streamInput, tools })
 
             yield* stream.pipe(
-              Stream.tap((event) => handleEvent(event)),
+              Stream.tap((event) => {
+                if (
+                  ((event.type === "text-delta" || event.type === "reasoning-delta") && event.text.length > 0) ||
+                  event.type === "tool-input-start" ||
+                  event.type === "tool-call" ||
+                  event.type === "tool-result" ||
+                  event.type === "tool-error" ||
+                  event.type === "step-finish"
+                )
+                  retrySafe = false
+                return handleEvent(event)
+              }),
               Stream.takeUntil(() => ctx.needsCompaction),
               Stream.runDrain,
             )
@@ -677,6 +709,7 @@ const layer = Layer.effect(
               SessionRetry.policy({
                 provider: input.model.providerID,
                 parse,
+                canRetry: () => retrySafe,
                 set: (info) => {
                   return status.set(ctx.sessionID, {
                     type: "retry",

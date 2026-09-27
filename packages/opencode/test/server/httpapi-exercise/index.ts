@@ -665,6 +665,44 @@ const scenarios: Scenario[] = [
   http.protected.get("/api/location", "v2.location.get").json(200, object),
   http.protected.get("/api/agent", "v2.agent.list").json(200, locationData(array)),
   http.protected.get("/api/model", "v2.model.list").json(200, locationData(array)),
+  http.protected.get("/api/jev", "v2.jev.get").json(200, object),
+  http.protected
+    .patch("/api/jev", "v2.jev.update")
+    .at((ctx) => ({
+      path: "/api/jev",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { enabled: false, skills: true, context: true, findings: true, routing: true },
+    }))
+    .json(200, (body) => {
+      object(body)
+      check(body.enabled === false, "Jev should remain disabled in the isolated fixture")
+    }),
+  http.protected
+    .post("/api/jev/prepare", "v2.jev.prepare")
+    .at((ctx) => ({
+      path: "/api/jev/prepare",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { sessionID: "ses_httpapi_prepare", text: "Inspect this fixture", agent: "build", auto: false, models: [] },
+    }))
+    .json(200, (body) => {
+      object(body)
+      check(body.status === "disabled", "disabled Jev must not perform provider work")
+    }),
+  http.protected.get("/api/tools", "v2.integration.toolsList").json(200, array),
+  http.protected
+    .post("/api/tools/{engineID}", "v2.integration.toolsAction")
+    .at((ctx) => ({
+      path: route("/api/tools/{engineID}", { engineID: "ponytail" }),
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { action: "disable" },
+    }))
+    .json(200, (body) => {
+      array(body)
+      check(
+        body.some((engine: { id: string; enabled: boolean }) => engine.id === "ponytail" && !engine.enabled),
+        "engine should be disabled",
+      )
+    }),
   http.protected.get("/api/provider", "v2.provider.list").json(200, locationData(array)),
   http.protected.get("/api/integration", "v2.integration.list").json(200, locationData(array)),
   http.protected
@@ -965,6 +1003,29 @@ const scenarios: Scenario[] = [
     }))
     .status(400, undefined, "none"),
   http.protected.get("/api/session/active", "v2.session.active").json(200, data(object), "none"),
+  ...["handoff", "health", "tasks", "usage"].map((operation) =>
+    http.protected
+      .get(`/api/session/{sessionID}/${operation}`, `v2.session.${operation}`)
+      .at((ctx) => ({
+        path: route(`/api/session/{sessionID}/${operation}`, { sessionID: "ses_httpapi_missing" }),
+        headers: ctx.headers(),
+      }))
+      .json(404, object, "status"),
+  ),
+  ...[
+    { operation: "approval", body: { mode: "default" } },
+    { operation: "instructions", body: { instructions: "Use the isolated fixture" } },
+    { operation: "command", body: { command: "missing", resume: false } },
+  ].map(({ operation, body }) =>
+    http.protected
+      .post(`/api/session/{sessionID}/${operation}`, `v2.session.${operation}`)
+      .at((ctx) => ({
+        path: route(`/api/session/{sessionID}/${operation}`, { sessionID: "ses_httpapi_missing" }),
+        headers: { ...ctx.headers(), "content-type": "application/json" },
+        body,
+      }))
+      .json(404, object, "status"),
+  ),
   http.protected
     .post("/api/session", "v2.session.create")
     .at((ctx) => ({

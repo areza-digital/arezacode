@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { fileURLToPath } from "url"
+import { patchSse } from "./patch-sse"
 
 const dir = fileURLToPath(new URL("..", import.meta.url))
 process.chdir(dir)
@@ -111,9 +112,15 @@ if (sseTypesPatched === sseTypesSource) {
   throw new Error(`SseFn patch did not apply; @hey-api/openapi-ts output may have changed (${sseTypesPath})`)
 }
 await Bun.write(sseTypesPath, sseTypesPatched)
+await Promise.all([
+  patchSse("./src/gen/core/serverSentEvents.gen.ts"),
+  patchSse("./src/v2/gen/core/serverSentEvents.gen.ts"),
+])
 
 await $`bun prettier --write src/gen`
 await $`bun prettier --write src/v2`
-await $`rm -rf dist`
-await $`bun tsc`
+if (!process.argv.includes("--generate-only")) {
+  await $`rm -rf dist`
+  await $`bun tsc`
+}
 await $`rm openapi.json`

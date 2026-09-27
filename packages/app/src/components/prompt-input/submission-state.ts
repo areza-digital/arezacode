@@ -1,4 +1,5 @@
 import { type ContextItem, type Prompt, type usePrompt } from "@/context/prompt"
+import { unwrap } from "solid-js/store"
 
 type PromptTarget = ReturnType<ReturnType<typeof usePrompt>["capture"]>
 
@@ -8,26 +9,43 @@ export function createPromptSubmissionState(input: {
   context: (ContextItem & { key: string })[]
 }) {
   const initial = input.target
+  const revision = (value: PromptTarget) =>
+    JSON.stringify([value.current(), value.context.items(), value.model.current()])
+  const original = revision(initial)
+  const originalPrompt = initial.current()
+  const prompt = structuredClone(unwrap(input.prompt))
+  const context = structuredClone(unwrap(input.context))
   let target = input.target
-  let cleared: Prompt | undefined
+  let expected = original
+  let expectedPrompt = originalPrompt
+  let cleared: string | undefined
+  let clearedPrompt: Prompt | undefined
+  const unchanged = () => initial.current() === originalPrompt && revision(initial) === original
 
   return {
-    prompt: input.prompt,
-    context: input.context,
+    prompt,
+    context,
     target: () => target,
+    unchanged,
     clear() {
-      if (initial !== target) initial.reset()
+      if (initial !== target && unchanged()) initial.reset()
+      if (target.current() !== expectedPrompt || revision(target) !== expected) return false
       target.reset()
-      cleared = target.current()
+      clearedPrompt = target.current()
+      cleared = JSON.stringify(target.current())
+      return true
     },
     retarget(next: PromptTarget) {
-      input.context.forEach(next.context.add)
+      context.forEach(next.context.add)
       target = next
+      expected = revision(target)
+      expectedPrompt = target.current()
     },
     current: (value: PromptTarget) => target === value,
     restore() {
-      if (cleared !== undefined && target.current() !== cleared) return
-      return { target, prompt: input.prompt, context: input.context }
+      if (target.current() !== (clearedPrompt ?? expectedPrompt)) return
+      if (cleared === undefined ? revision(target) !== expected : JSON.stringify(target.current()) !== cleared) return
+      return { target, prompt, context }
     },
   }
 }

@@ -807,6 +807,28 @@ it.instance(
   { git: true },
 )
 
+it.instance("saved wildcard approval never overrides configured denies in either session", () =>
+  Effect.gen(function* () {
+    const sessionID = SessionID.make("session_denied")
+    const ruleset: PermissionV1.Ruleset = [
+      { permission: "edit", pattern: "*", action: "ask" },
+      { permission: "edit", pattern: "protected/*", action: "deny" },
+    ]
+    const request = { sessionID, permission: "edit", patterns: ["ordinary.txt"], metadata: {}, always: ["*"], ruleset }
+    const fiber = yield* ask(request).pipe(Effect.forkScoped)
+    const pending = yield* waitForPending(1)
+    yield* reply({ requestID: pending[0].id, reply: "always" })
+    yield* Fiber.join(fiber)
+    yield* ask({ ...request, patterns: ["another.txt"] })
+    for (const id of [sessionID, SessionID.make("session_other")]) {
+      expect(yield* fail(ask({ ...request, sessionID: id, patterns: ["protected/file.txt"] }))).toBeInstanceOf(
+        PermissionV1.DeniedError,
+      )
+    }
+    expect(yield* list()).toEqual([])
+  }),
+)
+
 it.instance(
   "reply - reject cancels all pending for same session",
   () =>
@@ -1176,37 +1198,67 @@ it.instance(
   { git: true },
 )
 
-
-it.instance("approval modes govern the desktop permission path", () =>
-  Effect.gen(function* () {
-    const context = yield* TestInstance
-    const instances = yield* InstanceStore.Service
-    const instance = yield* instances.load({ directory: context.directory })
-    const { db } = yield* Database.Service
-    const sessionID = SessionID.make("ses_approval_legacy")
-    yield* db.insert(SessionTable).values({
-      id: sessionID, project_id: instance.project.id, slug: "approval", directory: context.directory,
-      title: "approval", version: "test", metadata: { approvalMode: "ask" },
-    }).run().pipe(Effect.orDie)
-    const input = { sessionID, permission: "bash", patterns: ["pwd"], metadata: {}, always: ["*"], ruleset: [{ permission: "*", pattern: "*", action: "allow" as const }] }
-    const first = yield* ask(input).pipe(Effect.forkScoped)
-    const pending = yield* waitForPending(1)
-    expect(pending[0].metadata.approvalMode).toBe("ask")
-    yield* reply({ requestID: pending[0].id, reply: "always" })
-    yield* Fiber.join(first)
-    const second = yield* ask(input).pipe(Effect.forkScoped)
-    expect(yield* waitForPending(1)).toHaveLength(1)
-    yield* rejectAll()
-    yield* Fiber.await(second)
-    yield* db.update(SessionTable).set({ metadata: { approvalMode: "auto" } }).where(eq(SessionTable.id, sessionID)).run().pipe(Effect.orDie)
-    yield* ask({ ...input, permission: "edit", ruleset: [] })
-    const command = yield* ask(input).pipe(Effect.forkScoped)
-    expect(yield* waitForPending(1)).toHaveLength(1)
-    yield* rejectAll()
-    yield* Fiber.await(command)
-    yield* db.update(SessionTable).set({ metadata: { approvalMode: "full" } }).where(eq(SessionTable.id, sessionID)).run().pipe(Effect.orDie)
-    yield* ask(input)
-    const denied = yield* ask({ ...input, ruleset: [{ permission: "*", pattern: "*", action: "deny" }] }).pipe(Effect.exit)
-    expect(Exit.isFailure(denied)).toBe(true)
-  }), { git: true },
+it.instance(
+  "approval modes govern the desktop permission path",
+  () =>
+    Effect.gen(function* () {
+      const context = yield* TestInstance
+      const instances = yield* InstanceStore.Service
+      const instance = yield* instances.load({ directory: context.directory })
+      const { db } = yield* Database.Service
+      const sessionID = SessionID.make("ses_approval_legacy")
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: sessionID,
+          project_id: instance.project.id,
+          slug: "approval",
+          directory: context.directory,
+          title: "approval",
+          version: "test",
+          metadata: { approvalMode: "ask" },
+        })
+        .run()
+        .pipe(Effect.orDie)
+      const input = {
+        sessionID,
+        permission: "bash",
+        patterns: ["pwd"],
+        metadata: {},
+        always: ["*"],
+        ruleset: [{ permission: "*", pattern: "*", action: "allow" as const }],
+      }
+      const first = yield* ask(input).pipe(Effect.forkScoped)
+      const pending = yield* waitForPending(1)
+      expect(pending[0].metadata.approvalMode).toBe("ask")
+      yield* reply({ requestID: pending[0].id, reply: "always" })
+      yield* Fiber.join(first)
+      const second = yield* ask(input).pipe(Effect.forkScoped)
+      expect(yield* waitForPending(1)).toHaveLength(1)
+      yield* rejectAll()
+      yield* Fiber.await(second)
+      yield* db
+        .update(SessionTable)
+        .set({ metadata: { approvalMode: "auto" } })
+        .where(eq(SessionTable.id, sessionID))
+        .run()
+        .pipe(Effect.orDie)
+      yield* ask({ ...input, permission: "edit", ruleset: [] })
+      const command = yield* ask(input).pipe(Effect.forkScoped)
+      expect(yield* waitForPending(1)).toHaveLength(1)
+      yield* rejectAll()
+      yield* Fiber.await(command)
+      yield* db
+        .update(SessionTable)
+        .set({ metadata: { approvalMode: "full" } })
+        .where(eq(SessionTable.id, sessionID))
+        .run()
+        .pipe(Effect.orDie)
+      yield* ask(input)
+      const denied = yield* ask({ ...input, ruleset: [{ permission: "*", pattern: "*", action: "deny" }] }).pipe(
+        Effect.exit,
+      )
+      expect(Exit.isFailure(denied)).toBe(true)
+    }),
+  { git: true },
 )

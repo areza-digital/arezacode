@@ -1,4 +1,4 @@
-import type { APIEvent } from "@solidjs/start"
+import type { APIEvent } from "@solidjs/start/server"
 import { waitUntil } from "@opencode-ai/console-resource"
 import type { DownloadPlatform } from "../types"
 

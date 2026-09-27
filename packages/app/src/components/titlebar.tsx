@@ -629,7 +629,7 @@ function TitlebarUpdateIconButton(props: { state: TitlebarUpdatePillState }) {
 }
 
 export function ChannelIndicator(props: { footer?: boolean; debugTools?: { visible: boolean; toggle: () => void } }) {
-  const channel = import.meta.env.VITE_OPENCODE_CHANNEL
+  const channel = import.meta.env.VITE_OPENCODE_CHANNEL ?? ""
   const platform = usePlatform()
   const label = () => (props.footer ? `/${channel}  ${platform.version ?? ""}` : channel.toUpperCase())
   const appearance = () =>

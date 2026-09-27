@@ -9,6 +9,7 @@ import path from "path"
 import z from "zod"
 import type { Agent } from "../../src/agent/agent"
 import { Provider } from "@/provider/provider"
+import { Plugin } from "@/plugin"
 
 import { Session } from "@/session/session"
 import { LLM } from "../../src/session/llm"
@@ -177,6 +178,17 @@ const root = LayerNode.group([
 ])
 const replacements = [
   [SessionSummary.node, summary],
+  [
+    Plugin.node,
+    Layer.succeed(
+      Plugin.Service,
+      Plugin.Service.of({
+        init: () => Effect.void,
+        list: () => Effect.succeed([]),
+        trigger: (_name, _input, output) => Effect.succeed(output),
+      }),
+    ),
+  ],
   [RuntimeFlags.node, RuntimeFlags.layer({ experimentalEventSystem: true })],
 ] as const
 const env = LayerNode.compile(
@@ -232,6 +244,96 @@ const boot = Effect.fn("test.boot")(function* () {
   const provider = yield* Provider.Service
   return { processors, session, provider }
 })
+
+for (const scenario of ["text", "reasoning", "tool-call", "executed-tool"] as const) {
+  let attempts = 0
+  let executions = 0
+  const unsafeRetry = testEffect(
+    LayerNode.compile(root, [
+      ...replacements,
+      [
+        LLM.node,
+        Layer.succeed(
+          LLM.Service,
+          LLM.Service.of({
+            stream: (input) => {
+              attempts++
+              const failure = LLMEvent.providerError({ message: "fetch failed" })
+              if (scenario === "executed-tool")
+                return Stream.fromEffect(
+                  Effect.promise(async () => {
+                    const execute = input.tools.echo.execute
+                    if (!execute) throw new Error("Expected executable tool")
+                    await execute({}, { toolCallId: "effect", messages: [] })
+                    return failure
+                  }),
+                )
+              return Stream.fromIterable([
+                ...(scenario === "text"
+                  ? [
+                      LLMEvent.textStart({ id: "partial" }),
+                      LLMEvent.textDelta({ id: "partial", text: "Retained output" }),
+                    ]
+                  : scenario === "reasoning"
+                    ? [
+                        LLMEvent.reasoningStart({ id: "partial" }),
+                        LLMEvent.reasoningDelta({ id: "partial", text: "Retained reasoning" }),
+                      ]
+                    : [LLMEvent.toolCall({ id: "call", name: "echo", input: {} })]),
+                failure,
+              ])
+            },
+          }),
+        ),
+      ],
+    ]),
+  )
+  unsafeRetry.live(`session.processor does not replay after ${scenario}`, () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const { processors, session, provider } = yield* boot()
+          const chat = yield* session.create({})
+          const parent = yield* user(chat.id, "Do the work once")
+          const msg = yield* assistant(chat.id, parent.id, dir)
+          const model = yield* provider.getModel(ref.providerID, ref.modelID)
+          const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model })
+          attempts = 0
+          executions = 0
+          const result = yield* handle.process({
+            user: parent,
+            sessionID: chat.id,
+            model,
+            agent: agent(),
+            system: [],
+            messages: [{ role: "user", content: "Do the work once" }],
+            tools: {
+              echo: tool({
+                inputSchema: z.object({}),
+                execute: async () => {
+                  executions++
+                  return "done"
+                },
+              }),
+            },
+          })
+          expect(result).toBe("stop")
+          expect(attempts).toBe(1)
+          expect(executions).toBe(scenario === "executed-tool" ? 1 : 0)
+          expect(handle.message.error).toBeDefined()
+          if (scenario === "text")
+            expect(yield* MessageV2.parts(msg.id)).toContainEqual(
+              expect.objectContaining({ type: "text", text: "Retained output" }),
+            )
+          if (scenario === "reasoning")
+            expect(yield* MessageV2.parts(msg.id)).toContainEqual(
+              expect.objectContaining({ type: "reasoning", text: "Retained reasoning" }),
+            )
+        }),
+      { config: cfg },
+    ),
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Tests

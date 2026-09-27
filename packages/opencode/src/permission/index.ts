@@ -77,9 +77,12 @@ const layer = Layer.effect(
 
       for (const pattern of request.patterns) {
         const configured = evaluate(request.permission, pattern, ruleset)
-        const rule = approval
-          ? { ...configured, action: configured.action === "deny" ? "deny" as const : approval }
-          : evaluate(request.permission, pattern, ruleset, approved)
+        const rule =
+          configured.action === "deny"
+            ? configured
+            : approval
+              ? { ...configured, action: approval }
+              : evaluate(request.permission, pattern, ruleset, approved)
         yield* Effect.logInfo("evaluated", { permission: request.permission, pattern, action: rule })
         if (rule.action === "deny") {
           return yield* new PermissionV1.DeniedError({

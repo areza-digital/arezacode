@@ -10,10 +10,24 @@ type DatabaseService = Database.Interface["db"]
 
 const decode = Schema.decodeUnknownEffect(SessionMessage.Message)
 
-export const taskBoundary = Effect.fn("SessionHistory.taskBoundary")(function* (db: DatabaseService, sessionID: SessionSchema.ID) {
-  return yield* db.select({ seq: SessionMessageTable.seq }).from(SessionMessageTable)
-    .where(and(eq(SessionMessageTable.session_id, sessionID), eq(SessionMessageTable.type, "user"), sql`json_extract(${SessionMessageTable.data}, '$.independent') = 1`))
-    .orderBy(desc(SessionMessageTable.seq)).limit(1).get().pipe(Effect.orDie)
+export const taskBoundary = Effect.fn("SessionHistory.taskBoundary")(function* (
+  db: DatabaseService,
+  sessionID: SessionSchema.ID,
+) {
+  return yield* db
+    .select({ seq: SessionMessageTable.seq, id: SessionMessageTable.id, timeCreated: SessionMessageTable.time_created })
+    .from(SessionMessageTable)
+    .where(
+      and(
+        eq(SessionMessageTable.session_id, sessionID),
+        eq(SessionMessageTable.type, "user"),
+        sql`json_extract(${SessionMessageTable.data}, '$.independent') = 1`,
+      ),
+    )
+    .orderBy(desc(SessionMessageTable.seq))
+    .limit(1)
+    .get()
+    .pipe(Effect.orDie)
 })
 
 export const latestCompaction = Effect.fnUntraced(function* (db: DatabaseService, sessionID: SessionSchema.ID) {

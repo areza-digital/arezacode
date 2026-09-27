@@ -802,6 +802,39 @@ it.instance("static loop returns assistant text through local provider", () =>
   }),
 )
 
+it.instance(
+  "UI completion retries missing visual checks and ends with an explicit error",
+  () =>
+    Effect.gen(function* () {
+      const { llm } = yield* useServerConfig(providerCfg)
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({
+        title: "UI verification",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "Change the UI color" }],
+      })
+      yield* llm.tool("bash", { command: "printf 'body { color: red }' > ui.css", description: "Apply UI color" })
+      yield* llm.text("Done")
+      yield* llm.text("Done")
+      yield* llm.text("Done")
+      const result = yield* prompt.loop({ sessionID: session.id })
+      expect(yield* llm.calls).toBe(4)
+      expect(result.info.role).toBe("assistant")
+      if (result.info.role === "assistant")
+        expect(result.info.error).toMatchObject({
+          name: "UnknownError",
+          data: { message: expect.stringContaining("No successful visual tool result") },
+        })
+    }),
+  { git: true },
+)
+
 it.instance("static loop consumes queued replies across turns", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)

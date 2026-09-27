@@ -267,6 +267,50 @@ describe("experimental HttpApi", () => {
     { git: true, config: { formatter: false, lsp: false } },
   )
 
+  it.instance(
+    "paginates tied session timestamps with opaque cursors",
+    () =>
+      Effect.gen(function* () {
+        const tmp = yield* TestInstance
+        const sessions = yield* Effect.forEach(["tie-a", "tie-b", "tie-c"], (title) => createSession({ title }))
+        yield* Effect.forEach(sessions, (session) => setSessionUpdated(session, 0))
+        const ids: string[] = []
+        let cursor: string | undefined
+        for (const index of [0, 1, 2]) {
+          const query = new URLSearchParams({ directory: tmp.directory, limit: "1" })
+          if (cursor) query.set("cursor", cursor)
+          const page = yield* request(`${ExperimentalPaths.session}?${query}`, tmp.directory)
+          expect(page.status).toBe(200)
+          const data = yield* json<Session.GlobalInfo[]>(page)
+          expect(data, `page ${index}, cursor ${cursor}`).toHaveLength(1)
+          ids.push(data[0].id)
+          cursor = page.headers["x-next-cursor"]
+          if (index < 2) {
+            expect(cursor).toStartWith("v1.")
+            expect(page.headers["access-control-expose-headers"]?.toLowerCase()).toContain("x-next-cursor")
+          }
+        }
+        expect(ids).toEqual(
+          sessions
+            .map((session) => session.id)
+            .sort()
+            .reverse(),
+        )
+        expect(cursor).toBeUndefined()
+        const legacy = yield* request(
+          `${ExperimentalPaths.session}?cursor=0&directory=${encodeURIComponent(tmp.directory)}`,
+          tmp.directory,
+        )
+        expect(legacy.status).toBe(200)
+        expect(yield* json(legacy)).toEqual([])
+        for (const invalid of ["v1.bm90LWpzb24", "v1.e30", "v2.invalid"]) {
+          const page = yield* request(`${ExperimentalPaths.session}?cursor=${invalid}`, tmp.directory)
+          expect(page.status).toBe(400)
+        }
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
   testWorktreeMutations(
     "serves worktree mutations through the default server app",
     () =>
