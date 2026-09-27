@@ -699,7 +699,7 @@ const scenarios: Scenario[] = [
     .json(200, (body) => {
       array(body)
       check(
-        body.some((engine: { id: string; enabled: boolean }) => engine.id === "ponytail" && !engine.enabled),
+        body.some((engine) => isRecord(engine) && engine.id === "ponytail" && engine.enabled === false),
         "engine should be disabled",
       )
     }),
