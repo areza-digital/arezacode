@@ -6,7 +6,7 @@ import { SESSION_OPEN_FILE_TAB } from "@/context/layout-tabs"
 
 export { SESSION_OPEN_FILE_TAB } from "@/context/layout-tabs"
 
-export const SESSION_UTILITY_TABS = ["new-tab", "agents", "browser", "terminal", "server"] as const
+export const SESSION_UTILITY_TABS = ["new-tab", "agents", "browser", "terminal", "server", "dependencies"] as const
 export const isSessionBrowserTab = (tab: string) => tab === "browser" || tab.startsWith("browser:")
 export const isSessionUtilityTab = (tab: string) =>
   isSessionBrowserTab(tab) || SESSION_UTILITY_TABS.some((item) => item === tab)

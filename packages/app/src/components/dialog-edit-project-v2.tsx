@@ -23,7 +23,7 @@ export function DialogEditProjectV2(props: { project: LocalProject; server: Serv
   const model = createEditProjectModel(props)
 
   return (
-    <Dialog fit>
+    <Dialog fit containerClass="max-w-[calc(100vw-32px)] max-h-[calc(100dvh-32px)]">
       <form onSubmit={model.submit} class="contents">
         <DialogHeader>
           <DialogTitle>{language.t("dialog.project.edit.title")}</DialogTitle>
@@ -176,7 +176,7 @@ export function DialogCreateProjectV2(props: { server: ServerConnection.Any; onS
   const global = useGlobal()
   const [state, setState] = createStore({ name: "", folders: [] as string[] })
   return (
-    <Dialog fit>
+    <Dialog fit containerClass="max-w-[calc(100vw-32px)] max-h-[calc(100dvh-32px)]">
       <form
         class="contents"
         onSubmit={(event) => {
@@ -196,7 +196,7 @@ export function DialogCreateProjectV2(props: { server: ServerConnection.Any; onS
         <DialogHeader>
           <DialogTitle>{language.t("project.create.title")}</DialogTitle>
         </DialogHeader>
-        <div class="flex min-w-[min(480px,80vw)] flex-col gap-6 p-4">
+        <div class="flex w-full min-w-0 flex-col gap-6 p-4">
           <Field>
             <Field.Label>{language.t("dialog.project.edit.name")}</Field.Label>
             <TextInputV2
@@ -236,10 +236,10 @@ function ProjectFoldersField(props: {
   return (
     <Field>
       <Field.Label>{language.t("project.folders")}</Field.Label>
-      <div class="flex w-full flex-col gap-2 rounded-lg border border-v2-border-border-base p-3">
+      <div class="flex w-full min-w-0 flex-col gap-2 rounded-lg border border-v2-border-border-base p-3">
         <For each={props.folders}>
           {(folder) => (
-            <div class="flex items-center gap-2">
+            <div class="flex min-w-0 items-center gap-2">
               <span class="min-w-0 flex-1 truncate" title={folder}>
                 {folder}
               </span>

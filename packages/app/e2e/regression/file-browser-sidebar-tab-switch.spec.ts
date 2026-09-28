@@ -22,7 +22,15 @@ test("opens the panel picker, nested agents, and browser controls", async ({ pag
   const panel = page.locator("#review-panel")
   await panel.getByRole("button", { name: "New tab", exact: true }).click()
   const picker = panel.locator('[data-component="session-panel-picker"]')
-  await expect(picker.getByRole("button")).toHaveText(["Review", "Terminal", "Browser", "Server", "Files", "Agents"])
+  await expect(picker.getByRole("button")).toHaveText([
+    "Review",
+    "Terminal",
+    "Browser",
+    "Server",
+    "Files",
+    "Agents",
+    "Dependencies",
+  ])
   await page.screenshot({ path: "/tmp/areza-panels-picker.png" })
   await picker.getByRole("button", { name: "Agents", exact: true }).click()
   const agents = panel.locator('[data-component="session-agents"]')

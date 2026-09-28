@@ -8,6 +8,7 @@ import type { UpdaterPlatform } from "../updater"
 import type { DraftStore } from "@/utils/draft-store"
 import type { EmbeddedBrowser } from "../browser"
 import type { ProjectServicesPlatform } from "../project-services"
+import type { ProjectDependencies } from "../project-dependencies"
 
 type PickerPaths = string | string[] | null
 type OpenDirectoryPickerOptions = { title?: string; multiple?: boolean }
@@ -39,6 +40,7 @@ type PlatformBase = {
 
   browser?: EmbeddedBrowser
   projectServices?: ProjectServicesPlatform
+  checkDependencies?(directory: string): Promise<ProjectDependencies>
 
   /** Open a local path in a local app (desktop only) */
   openPath?(path: string, app?: string): Promise<void>

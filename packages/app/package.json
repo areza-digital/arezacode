@@ -1,6 +1,6 @@
 {
   "name": "@opencode-ai/app",
-  "version": "1.18.30",
+  "version": "1.18.32",
   "description": "",
   "type": "module",
   "exports": {
@@ -8,6 +8,7 @@
     "./desktop-menu": "./src/desktop-menu.ts",
     "./browser": "./src/browser.ts",
     "./project-services": "./src/project-services.ts",
+    "./project-dependencies": "./src/project-dependencies.ts",
     "./i18n/desktop-native": "./src/i18n/desktop-native.ts",
     "./updater": "./src/updater.ts",
     "./wsl/types": "./src/wsl/types.ts",

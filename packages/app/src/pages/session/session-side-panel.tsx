@@ -30,6 +30,7 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import FileTree from "@/components/file-tree"
 import { normalizeFileTreeV2Path } from "@/components/file-tree-v2-model"
 import { SessionContextUsage } from "@/components/session-context-usage"
+import { ProjectDependenciesPanel } from "@/components/project-dependencies-panel"
 
 const reviewTabID = "session-side-panel-review-tab"
 const reviewTabPanelID = "session-side-panel-review-tabpanel"
@@ -267,6 +268,7 @@ export function SessionSidePanel(props: {
     browser: "window-cursor",
     terminal: "terminal",
     server: "server",
+    dependencies: "checklist",
   } as const
   const openPanel = (tab: string) => {
     if (tab === SESSION_OPEN_FILE_TAB) {
@@ -330,6 +332,7 @@ export function SessionSidePanel(props: {
                 { id: "server", icon: "server", label: "session.panel.server" },
                 { id: SESSION_OPEN_FILE_TAB, icon: "folder", label: "session.panel.files" },
                 { id: "agents", icon: "subagent", label: "session.panel.agents" },
+                { id: "dependencies", icon: "checklist", label: "session.panel.dependencies" },
               ] as const
             }
           >
@@ -356,6 +359,16 @@ export function SessionSidePanel(props: {
         <Tabs.Content value="server" class="h-full min-h-0 overflow-hidden">
           <SessionServerPanel active={reviewOpen()} onPreview={(url) => openPanel(`browser:${url}`)} />
         </Tabs.Content>
+      </Show>
+      <Show when={tabs().all().includes("dependencies")}>
+        <div
+          role="tabpanel"
+          class="h-full min-h-0 overflow-hidden"
+          classList={{ hidden: activeTab() !== "dependencies" }}
+          inert={activeTab() !== "dependencies" || undefined}
+        >
+          <ProjectDependenciesPanel />
+        </div>
       </Show>
       <Show when={tabs().all().includes("terminal")}>
         <div

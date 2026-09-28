@@ -26,6 +26,7 @@ import { createDesktopDraftStore } from "./draft-store"
 import { nativeT } from "./native-translations"
 import { registerBrowserHandlers } from "./browser-view"
 import { listProjectServices, startProjectService, stopProjectService } from "./project-services"
+import { checkProjectDependencies } from "./project-dependencies"
 
 const pickerFilters = (ext?: string[]) => {
   if (!ext || ext.length === 0) return undefined
@@ -66,6 +67,10 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("project-services-list", (event, directory: unknown) => {
     requireServiceOwner(event)
     return listProjectServices(directory)
+  })
+  ipcMain.handle("project-dependencies-check", (event, directory: unknown) => {
+    requireServiceOwner(event)
+    return checkProjectDependencies(directory)
   })
   ipcMain.handle("project-services-stop", (event, directory: unknown, id: unknown) => {
     requireServiceOwner(event)

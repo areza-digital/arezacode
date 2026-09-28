@@ -12,6 +12,7 @@ const updaterHandler = (_: unknown, state: UpdaterState) => {
 }
 
 const api: ElectronAPI = {
+  checkDependencies: (directory) => ipcRenderer.invoke("project-dependencies-check", directory),
   projectServices: {
     list: (directory) => ipcRenderer.invoke("project-services-list", directory),
     stop: (directory, id) => ipcRenderer.invoke("project-services-stop", directory, id),

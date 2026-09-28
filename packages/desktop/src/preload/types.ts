@@ -1,6 +1,7 @@
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import type { EmbeddedBrowser } from "@opencode-ai/app/browser"
 import type { ProjectServicesPlatform } from "@opencode-ai/app/project-services"
+import type { ProjectDependencies } from "@opencode-ai/app/project-dependencies"
 import type { WslServersPlatform } from "@opencode-ai/app/wsl/types"
 import type { UpdaterState } from "@opencode-ai/app/updater"
 import type { DesktopNativeBundle } from "@opencode-ai/app/i18n/desktop-native"
@@ -47,6 +48,7 @@ export type FatalRendererError = {
 export type ElectronAPI = {
   browser: EmbeddedBrowser
   projectServices: ProjectServicesPlatform
+  checkDependencies(directory: string): Promise<ProjectDependencies>
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
   awaitInitialization: () => Promise<ServerReadyData>
