@@ -179,6 +179,7 @@ export const dict = {
   "jev.name": "Jev",
   "prompt.browser.automatic": "Automatic browser checks. Click to use manual tests instead.",
   "prompt.browser.manual": "Manual tests only. Click to allow automatic browser checks.",
+  "prompt.browser.label": "Automatic browser checks",
   "prompt.independent.label": "Independent tasks",
   "prompt.independent.on":
     "Each message starts fresh model context. Earlier tasks stay visible. Click to continue the latest task instead.",

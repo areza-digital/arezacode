@@ -201,7 +201,7 @@ export function PromptInputV2(props: PromptInputV2Props) {
           </Show>
         </ScrollView>
 
-        <div class="flex h-11 items-center px-2">
+        <div class="flex h-11 items-center gap-1 px-2">
           <div
             class="flex min-w-0 flex-1 items-center gap-1"
             aria-hidden={state.mode === "shell"}
@@ -568,6 +568,7 @@ export function PromptInputV2Select(props: {
 }) {
   return (
     <TooltipV2
+      class={props.iconOnly ? "shrink-0" : "min-w-0"}
       placement="top"
       value={
         <>
@@ -583,7 +584,7 @@ export function PromptInputV2Select(props: {
           as={ButtonV2}
           variant="ghost-muted"
           size="normal"
-          class={`max-w-[220px] justify-start ![font-weight:440] ${props.class ?? ""}`}
+          class={`min-w-0 max-w-[220px] justify-start ![font-weight:440] ${props.class ?? ""}`}
           classList={{ "!size-7 !p-0": props.iconOnly }}
           aria-label={props.title}
         >

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import type { ProjectDependencies } from "../../src/project-dependencies"
-import { mockOpenCodeServer } from "../utils/mock-server"
+import { currentSession, mockOpenCodeServer } from "../utils/mock-server"
 
 const directory = "/Users/example/Documents/Projects/project-with-a-very-long-name/another-long-folder/workspace"
 const server = `http://${process.env.PLAYWRIGHT_SERVER_HOST ?? "127.0.0.1"}:${process.env.PLAYWRIGHT_SERVER_PORT ?? "4096"}`
@@ -82,6 +82,111 @@ test("automatically checks dependencies on opening, preserves filters, and handl
   const bounds = await empty.boundingBox()
   expect(bounds?.height).toBeGreaterThan(400)
   await page.screenshot({ path: "/tmp/areza-dependencies-empty.png" })
+})
+
+test("moves composer tools into a working overflow menu when space is tight", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 })
+  await setup(page)
+  const jev = { enabled: true, configured: true, skills: true, context: true, findings: true, routing: true }
+  await page.route("**/api/jev", async (route) => {
+    if (route.request().method() === "PATCH") Object.assign(jev, route.request().postDataJSON())
+    await route.fulfill({ json: jev })
+  })
+  await page.route(`**/api/session/${sessionID}`, (route) =>
+    route.fulfill({
+      json: { data: { ...currentSession({ id: sessionID, directory }), approvalMode: "full" } },
+    }),
+  )
+  await page.route(
+    (url) => url.pathname === "/agent",
+    (route) =>
+      route.fulfill({
+        json: [
+          { name: "build", mode: "primary" },
+          { name: "plan", mode: "primary" },
+        ],
+      }),
+  )
+  await page.route(
+    (url) => url.pathname === "/provider",
+    (route) =>
+      route.fulfill({
+        json: {
+          all: [
+            {
+              id: "openrouter",
+              name: "OpenRouter",
+              models: {
+                "openai/gpt-6-astra": {
+                  id: "openai/gpt-6-astra",
+                  name: "GPT-6 Astra",
+                  limit: { context: 200_000 },
+                  variants: { high: {}, xhigh: {} },
+                },
+              },
+            },
+          ],
+          connected: ["openrouter"],
+          default: { providerID: "openrouter", modelID: "openai/gpt-6-astra" },
+        },
+      }),
+  )
+  await page.goto("/")
+  await page.getByRole("button", { name: "Dependency project", exact: true }).click()
+  const composer = page.locator('[data-component="prompt-input-v2"]')
+  await expect(composer).toBeVisible()
+  await expect(composer.locator('[data-action="prompt-approval"]')).toContainText("Full access")
+  await composer.evaluate((element) => {
+    element.style.width = "370px"
+  })
+  const menu = composer.locator('[data-action="prompt-tools-menu"]')
+  await expect(menu).toBeVisible()
+  await expect(composer.locator('[data-action="prompt-independent"]')).toBeHidden()
+  await expect(composer.locator('[data-action="prompt-jev"]')).toBeHidden()
+  await menu.click()
+  const browser = page.getByRole("menuitemcheckbox", { name: "Automatic browser checks" })
+  const independent = page.getByRole("menuitemcheckbox", { name: "Independent tasks" })
+  const browserBefore = await browser.isChecked()
+  const independentBefore = await independent.isChecked()
+  await browser.click()
+  await expect(browser).toBeChecked({ checked: !browserBefore })
+  await independent.press("Space")
+  await expect(independent).toBeChecked({ checked: !independentBefore })
+  await expect(page.getByRole("menuitemcheckbox", { name: "Jev", exact: true })).toBeChecked()
+  await page.screenshot({ path: "/tmp/areza-composer-overflow-menu.png" })
+  await page.getByRole("menuitemcheckbox", { name: "Jev", exact: true }).click()
+  await expect.poll(() => jev.enabled).toBe(false)
+  await page.keyboard.press("Escape")
+  for (const width of [320, 370, 480, 680]) {
+    await composer.evaluate((element, width) => {
+      element.style.width = `${width}px`
+    }, width)
+    await expect
+      .poll(() =>
+        composer.evaluate((element) => {
+          const submit = element.querySelector('[data-action="prompt-submit"]')!.getBoundingClientRect()
+          return [...element.querySelectorAll('button:not([data-action="prompt-submit"])')]
+            .filter((button) => button.getClientRects().length)
+            .some((button) => {
+              const bounds = button.getBoundingClientRect()
+              return bounds.right > submit.left && bounds.bottom > submit.top && bounds.top < submit.bottom
+            })
+        }),
+      )
+      .toBe(false)
+  }
+  await page.getByRole("button", { name: "Toggle review", exact: true }).click()
+  await composer.evaluate((element) => element.style.removeProperty("width"))
+  await expect(menu).toBeHidden()
+  await expect(composer.locator('[data-action="prompt-browser"]')).toHaveAttribute(
+    "aria-pressed",
+    String(!browserBefore),
+  )
+  await expect(composer.locator('[data-action="prompt-independent"]')).toHaveAttribute(
+    "aria-pressed",
+    String(!independentBefore),
+  )
+  await page.screenshot({ path: "/tmp/areza-composer-wide.png" })
 })
 
 test("keeps long source folder paths inside the create project dialog", async ({ page }) => {

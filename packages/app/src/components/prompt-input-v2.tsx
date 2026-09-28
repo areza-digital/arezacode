@@ -9,6 +9,7 @@ import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { Icon } from "@opencode-ai/ui/v2/icon"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
+import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
 import { createEffect, createMemo, createResource, on, Show } from "solid-js"
 import { useServerSDK } from "@/context/server-sdk"
@@ -139,56 +140,118 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
           />
         }
         toolsControl={
-          <div class="flex shrink-0 items-center gap-1">
-            <Show when={jev().available()}>
-              <TooltipV2 value={language.t(jev().state.enabled ? "jev.disable" : "jev.enable")}>
+          <div
+            class="@container/prompt-tools min-w-6 flex-1"
+            classList={{ "max-w-[80px]": jev().available(), "max-w-[52px]": !jev().available() }}
+          >
+            <div
+              classList={{
+                "@min-[80px]/prompt-tools:hidden": jev().available(),
+                "@min-[52px]/prompt-tools:hidden": !jev().available(),
+              }}
+            >
+              <MenuV2 gutter={6} modal={false} placement="top-end">
+                <MenuV2.Trigger
+                  as={IconButtonV2}
+                  type="button"
+                  variant="ghost-muted"
+                  size="normal"
+                  data-action="prompt-tools-menu"
+                  icon={<Icon name="outline-dots" />}
+                  aria-label={language.t("common.moreOptions")}
+                />
+                <MenuV2.Portal>
+                  <MenuV2.Content>
+                    <Show when={jev().available()}>
+                      <MenuV2.CheckboxItem
+                        checked={jev().state.enabled}
+                        disabled={!jev().state.loaded || jev().state.saving || jev().state.error}
+                        onChange={(enabled) => void jev().update({ enabled })}
+                        closeOnSelect={false}
+                      >
+                        <Icon name="settings-gear" />
+                        {language.t("jev.name")}
+                      </MenuV2.CheckboxItem>
+                    </Show>
+                    <MenuV2.CheckboxItem
+                      checked={settings.general.browserVerification()}
+                      disabled={!settings.ready()}
+                      onChange={settings.general.setBrowserVerification}
+                      closeOnSelect={false}
+                    >
+                      <Icon name="monitor" />
+                      {language.t("prompt.browser.label")}
+                    </MenuV2.CheckboxItem>
+                    <MenuV2.CheckboxItem
+                      checked={settings.general.independentTasks()}
+                      disabled={!settings.ready()}
+                      onChange={settings.general.setIndependentTasks}
+                      closeOnSelect={false}
+                    >
+                      <Icon name="workspace-isolated" />
+                      {language.t("prompt.independent.label")}
+                    </MenuV2.CheckboxItem>
+                  </MenuV2.Content>
+                </MenuV2.Portal>
+              </MenuV2>
+            </div>
+            <div
+              class="hidden items-center gap-1"
+              classList={{
+                "@min-[80px]/prompt-tools:flex": jev().available(),
+                "@min-[52px]/prompt-tools:flex": !jev().available(),
+              }}
+            >
+              <Show when={jev().available()}>
+                <TooltipV2 value={language.t(jev().state.enabled ? "jev.disable" : "jev.enable")}>
+                  <IconButtonV2
+                    type="button"
+                    variant={jev().state.enabled ? "neutral" : "ghost-muted"}
+                    size="normal"
+                    data-action="prompt-jev"
+                    icon={<Icon name="settings-gear" />}
+                    aria-label={language.t("jev.name")}
+                    aria-pressed={jev().state.enabled}
+                    disabled={!jev().state.loaded || jev().state.saving || jev().state.error}
+                    onClick={() => void jev().update({ enabled: !jev().state.enabled })}
+                  />
+                </TooltipV2>
+              </Show>
+              <TooltipV2
+                value={language.t(
+                  settings.general.browserVerification() ? "prompt.browser.automatic" : "prompt.browser.manual",
+                )}
+              >
                 <IconButtonV2
                   type="button"
-                  variant={jev().state.enabled ? "neutral" : "ghost-muted"}
+                  variant={settings.general.browserVerification() ? "neutral" : "ghost-muted"}
                   size="normal"
-                  data-action="prompt-jev"
-                  icon={<Icon name="settings-gear" />}
-                  aria-label={language.t("jev.name")}
-                  aria-pressed={jev().state.enabled}
-                  disabled={!jev().state.loaded || jev().state.saving || jev().state.error}
-                  onClick={() => void jev().update({ enabled: !jev().state.enabled })}
+                  data-action="prompt-browser"
+                  icon={<Icon name="monitor" />}
+                  aria-label={language.t("session.panel.browser")}
+                  aria-pressed={settings.general.browserVerification()}
+                  disabled={!settings.ready()}
+                  onClick={() => settings.general.setBrowserVerification(!settings.general.browserVerification())}
                 />
               </TooltipV2>
-            </Show>
-            <TooltipV2
-              value={language.t(
-                settings.general.browserVerification() ? "prompt.browser.automatic" : "prompt.browser.manual",
-              )}
-            >
-              <IconButtonV2
-                type="button"
-                variant={settings.general.browserVerification() ? "neutral" : "ghost-muted"}
-                size="normal"
-                data-action="prompt-browser"
-                icon={<Icon name="monitor" />}
-                aria-label={language.t("session.panel.browser")}
-                aria-pressed={settings.general.browserVerification()}
-                disabled={!settings.ready()}
-                onClick={() => settings.general.setBrowserVerification(!settings.general.browserVerification())}
-              />
-            </TooltipV2>
-            <TooltipV2
-              value={language.t(
-                settings.general.independentTasks() ? "prompt.independent.on" : "prompt.independent.off",
-              )}
-            >
-              <IconButtonV2
-                type="button"
-                variant={settings.general.independentTasks() ? "neutral" : "ghost-muted"}
-                size="normal"
-                data-action="prompt-independent"
-                icon={<Icon name="workspace-isolated" />}
-                aria-label={language.t("prompt.independent.label")}
-                aria-pressed={settings.general.independentTasks()}
-                disabled={!settings.ready()}
-                onClick={() => settings.general.setIndependentTasks(!settings.general.independentTasks())}
-              />
-            </TooltipV2>
+              <TooltipV2
+                value={language.t(
+                  settings.general.independentTasks() ? "prompt.independent.on" : "prompt.independent.off",
+                )}
+              >
+                <IconButtonV2
+                  type="button"
+                  variant={settings.general.independentTasks() ? "neutral" : "ghost-muted"}
+                  size="normal"
+                  data-action="prompt-independent"
+                  icon={<Icon name="workspace-isolated" />}
+                  aria-label={language.t("prompt.independent.label")}
+                  aria-pressed={settings.general.independentTasks()}
+                  disabled={!settings.ready()}
+                  onClick={() => settings.general.setIndependentTasks(!settings.general.independentTasks())}
+                />
+              </TooltipV2>
+            </div>
           </div>
         }
       />
@@ -713,6 +776,7 @@ function PromptInputV2ModelControl(props: {
       <TooltipV2
         placement="top"
         gutter={4}
+        class="min-w-0"
         value={
           <>
             {props.title}
