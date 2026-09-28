@@ -100,6 +100,34 @@ afterEach(async () => {
 })
 
 describe("tool.registry", () => {
+  it.instance("exposes the dependency checker and runs it through tool permissions", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const instance = yield* TestInstance
+      const tool = (yield* registry.all()).find((tool) => tool.id === "dependency_check")
+      expect(tool?.description).toContain("first use dependency_check")
+      const permissions: string[] = []
+      const result = yield* tool!.execute(
+        {},
+        {
+          sessionID: SessionID.make("ses_dependencies"),
+          messageID: MessageID.make("msg_dependencies"),
+          agent: "build",
+          abort: AbortSignal.any([]),
+          messages: [],
+          metadata: () => Effect.void,
+          ask: (request) =>
+            Effect.sync(() => {
+              permissions.push(request.permission)
+              expect(request.patterns).toEqual([instance.directory])
+            }),
+        },
+      )
+      expect(permissions).toEqual(["dependency_check"])
+      expect(JSON.parse(result.output)).toEqual({ status: "noPackage" })
+    }),
+  )
+
   it.instance("does not expose task_status", () =>
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service

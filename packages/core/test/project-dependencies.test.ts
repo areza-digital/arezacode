@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { checkProjectDependencies, parseOutdated } from "./project-dependencies"
+import { checkProjectDependencies, parseOutdated } from "../src/project-dependencies"
 
 describe("project dependency checks", () => {
   test("reads Bun workspace rows, upgrade kinds, and release-age limits", () => {

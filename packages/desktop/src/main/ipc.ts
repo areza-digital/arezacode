@@ -26,7 +26,7 @@ import { createDesktopDraftStore } from "./draft-store"
 import { nativeT } from "./native-translations"
 import { registerBrowserHandlers } from "./browser-view"
 import { listProjectServices, startProjectService, stopProjectService } from "./project-services"
-import { checkProjectDependencies } from "./project-dependencies"
+import { checkProjectDependencies } from "@opencode-ai/core/project-dependencies"
 
 const pickerFilters = (ext?: string[]) => {
   if (!ext || ext.length === 0) return undefined

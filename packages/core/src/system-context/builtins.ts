@@ -10,6 +10,7 @@ import { FSUtil } from "../fs-util"
 import { Global } from "../global"
 import { engineEnabled } from "../util/native-command"
 import { Jev } from "../jev"
+import { workflow } from "../project-dependencies"
 
 const builtIns = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -23,6 +24,7 @@ const builtIns = Layer.effectDiscard(
       `  Platform: ${process.platform}`,
       "</env>",
       Jev.workflow,
+      workflow,
       "Choose the smallest relevant project_check operation and owning package workdir: diff for a presentation-only edit, test with targeted files for changed behavior, typecheck for affected types, or script for an existing named check. Use verify (all configured lint, typechecks, tests and builds across workspaces) only for cross-cutting changes, release verification or an explicit requirement. Do not repeat unchanged passing checks. Missing/skipped checks are not passes. Use ci for a requested CI check and deploy only when explicitly requested; these execute repository code with normal permissions, not remote workflows.",
     ].join("\n")
     const context = SystemContext.combine([

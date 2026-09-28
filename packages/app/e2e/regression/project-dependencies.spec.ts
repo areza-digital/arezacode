@@ -8,7 +8,7 @@ const sessionID = "ses_dependencies"
 
 test.use({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" })
 
-test("checks dependency versions, retains results between tabs, and handles retries", async ({ page }) => {
+test("automatically checks dependencies on opening, preserves filters, and handles retries", async ({ page }) => {
   let result: ProjectDependencies = {
     status: "checked",
     checkedAt: 1,
@@ -34,7 +34,9 @@ test("checks dependency versions, retains results between tabs, and handles retr
     ],
   }
   const pending = Promise.withResolvers<void>()
+  const checks: string[] = []
   await page.exposeFunction("checkTestDependencies", async (requested: string) => {
+    checks.push(requested)
     expect(requested).toBe(directory)
     await pending.promise
     return result
@@ -43,11 +45,12 @@ test("checks dependency versions, retains results between tabs, and handles retr
   await page.goto("/")
   await page.getByRole("button", { name: "Dependency project", exact: true }).click()
   const panel = page.locator("#review-panel")
+  expect(checks).toHaveLength(0)
   await panel.getByRole("button", { name: "New tab", exact: true }).click()
   await panel.getByRole("button", { name: "Dependencies", exact: true }).click()
   const dependencies = panel.locator('[data-component="project-dependencies"]')
-  await dependencies.getByRole("button", { name: "Check updates" }).click()
   await expect(dependencies.getByRole("button", { name: "Checking versions…" })).toBeDisabled()
+  expect(checks).toHaveLength(1)
   pending.resolve()
   await expect(dependencies.getByRole("article")).toHaveCount(2)
   await expect(dependencies.getByText("Review breaking changes before upgrading.")).toBeVisible()
@@ -58,18 +61,27 @@ test("checks dependency versions, retains results between tabs, and handles retr
   await panel.getByRole("button", { name: "New tab", exact: true }).click()
   await panel.getByRole("button", { name: "Agents", exact: true }).click()
   await expect(dependencies).toBeHidden()
+  expect(checks).toHaveLength(1)
   await panel.getByRole("tab", { name: "Dependencies", exact: true }).click()
   await expect(dependencies.getByRole("searchbox")).toHaveValue("solid")
+  expect(checks).toHaveLength(2)
   result = { status: "failed" }
-  await dependencies.getByRole("button", { name: "Check updates" }).click()
+  await dependencies.getByRole("button", { name: "Refresh" }).click()
   await expect(dependencies.getByRole("alert")).toContainText("Could not check versions")
   await expect(dependencies.getByRole("article")).toHaveCount(0)
   result = { status: "missingLock" }
-  await dependencies.getByRole("button", { name: "Check updates" }).click()
+  await dependencies.getByRole("button", { name: "Refresh" }).click()
   await expect(dependencies.getByRole("alert")).toContainText("No Bun lockfile found")
   result = { status: "checked", packages: [], checkedAt: 2 }
-  await dependencies.getByRole("button", { name: "Check updates" }).click()
+  await dependencies.getByRole("button", { name: "Refresh" }).click()
   await expect(dependencies.getByText("No newer versions found", { exact: true })).toBeVisible()
+  const empty = dependencies.locator('[data-component="empty-state"]')
+  await expect(empty).toBeVisible()
+  await expect(dependencies.getByRole("status")).toHaveCount(0)
+  await expect(dependencies.getByRole("searchbox")).toHaveCount(0)
+  const bounds = await empty.boundingBox()
+  expect(bounds?.height).toBeGreaterThan(400)
+  await page.screenshot({ path: "/tmp/areza-dependencies-empty.png" })
 })
 
 test("keeps long source folder paths inside the create project dialog", async ({ page }) => {

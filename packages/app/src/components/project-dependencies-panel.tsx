@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, onCleanup } from "solid-js"
+import { For, Show, createEffect, createMemo, on, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Button } from "@opencode-ai/ui/button"
 import { EmptyState } from "@opencode-ai/ui/empty-state"
@@ -10,7 +10,7 @@ import { useSDK } from "@/context/sdk"
 import { useServer } from "@/context/server"
 import type { ProjectDependencies } from "@/project-dependencies"
 
-export function ProjectDependenciesPanel() {
+export function ProjectDependenciesPanel(props: { active: boolean }) {
   const language = useLanguage()
   const platform = usePlatform()
   const sdk = useSDK()
@@ -36,6 +36,11 @@ export function ProjectDependenciesPanel() {
     const data = await platform.checkDependencies!(sdk().directory).catch(() => ({ status: "failed" as const }))
     if (revision === current) setState({ data, loading: false })
   }
+  createEffect(
+    on([() => props.active, () => sdk().directory, () => server.key, available], () => {
+      if (props.active) void check()
+    }),
+  )
   const result = () => (state.data?.status === "checked" ? state.data : undefined)
   const packages = createMemo(
     () =>
@@ -48,7 +53,7 @@ export function ProjectDependenciesPanel() {
       <div class="flex shrink-0 items-center justify-between gap-2 p-4">
         <span class="text-14-medium text-text-strong">{language.t("session.panel.dependencies")}</span>
         <Button variant="ghost" size="small" disabled={!available() || state.loading} onClick={() => void check()}>
-          {language.t(state.loading ? "dependencies.checking" : "dependencies.check")}
+          {language.t(state.loading ? "dependencies.checking" : "session.panel.refresh")}
         </Button>
       </div>
       <ScrollView class="min-h-0 flex-1" viewportClass="flex min-w-0 flex-col gap-4 px-4 pb-4">
@@ -62,25 +67,29 @@ export function ProjectDependenciesPanel() {
             />
           }
         >
-          <p class="text-12-regular text-text-weak">{language.t("dependencies.scope")}</p>
           <Show when={state.loading}>
-            <p role="status" class="text-13-regular text-text-weak">
-              {language.t("dependencies.checking")}
-            </p>
+            <div role="status" class="flex flex-1 flex-col">
+              <EmptyState
+                icon={<Icon name="checklist" />}
+                title={language.t("dependencies.checking")}
+                description={language.t("dependencies.scope")}
+              />
+            </div>
           </Show>
           <Show when={state.data && state.data.status !== "checked" ? state.data.status : undefined}>
             {(status) => (
-              <p role="alert" class="text-13-regular text-text-weak">
-                {language.t(`dependencies.${status()}`)}
-              </p>
+              <div role="alert" class="flex flex-1 flex-col">
+                <EmptyState
+                  icon={<Icon name="checklist" />}
+                  title={language.t("session.panel.dependencies")}
+                  description={language.t(`dependencies.${status()}`)}
+                />
+              </div>
             )}
           </Show>
           <Show when={result()}>
             {(data) => (
               <>
-                <div role="status" class="text-13-medium text-text-strong">
-                  {language.t("dependencies.count", { count: data().packages.length })}
-                </div>
                 <Show
                   when={data().packages.length}
                   fallback={
@@ -91,6 +100,10 @@ export function ProjectDependenciesPanel() {
                     />
                   }
                 >
+                  <p class="text-12-regular text-text-weak">{language.t("dependencies.scope")}</p>
+                  <div role="status" class="text-13-medium text-text-strong">
+                    {language.t("dependencies.count", { count: data().packages.length })}
+                  </div>
                   <input
                     type="search"
                     class="w-full min-w-0 rounded-md border border-border-base bg-transparent px-3 py-2 text-13-regular text-text-strong focus-visible:outline-2 focus-visible:outline-border-active"

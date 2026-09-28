@@ -367,7 +367,7 @@ export function SessionSidePanel(props: {
           classList={{ hidden: activeTab() !== "dependencies" }}
           inert={activeTab() !== "dependencies" || undefined}
         >
-          <ProjectDependenciesPanel />
+          <ProjectDependenciesPanel active={reviewOpen() && activeTab() === "dependencies"} />
         </div>
       </Show>
       <Show when={tabs().all().includes("terminal")}>

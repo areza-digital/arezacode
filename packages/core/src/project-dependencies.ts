@@ -2,16 +2,43 @@ import { execFile } from "node:child_process"
 import { realpath, stat } from "node:fs/promises"
 import { isAbsolute, join } from "node:path"
 import { promisify, stripVTControlCharacters } from "node:util"
-import type { ProjectDependencies, ProjectDependency } from "@opencode-ai/app/project-dependencies"
+import { Schema } from "effect"
+
+export const workflow =
+  "When asked to check or update project dependencies, first use dependency_check for the active project. Review its current, within-range, and latest versions before proposing or applying updates. The check is read-only, covers direct dependencies across Bun workspaces, and is not a security audit. Respect project permissions and instructions for updates, then check again. Missing package.json, missing Bun lockfile, unavailable Bun, and failed checks are not up-to-date results."
+
+export const Input = Schema.Struct({})
+export const Output = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("checked"),
+    packages: Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        current: Schema.String,
+        update: Schema.String,
+        latest: Schema.String,
+        workspace: Schema.String,
+        kind: Schema.Literals(["major", "minor", "patch", "prerelease"]),
+        ageLimited: Schema.Boolean,
+      }),
+    ),
+    checkedAt: Schema.Number,
+  }),
+  Schema.Struct({ status: Schema.Literals(["noPackage", "missingLock", "bunUnavailable", "failed"]) }),
+])
+export type ProjectDependencies = typeof Output.Type
+export type ProjectDependency = Extract<ProjectDependencies, { status: "checked" }>["packages"][number]
 
 const execute = promisify(execFile)
 const pending = new Map<string, Promise<ProjectDependencies>>()
 
-export async function checkProjectDependencies(directory: unknown): Promise<ProjectDependencies> {
+export async function checkProjectDependencies(directory: unknown, signal?: AbortSignal): Promise<ProjectDependencies> {
+  signal?.throwIfAborted()
   if (typeof directory !== "string" || !isAbsolute(directory) || directory.includes("\0"))
     throw new Error("Invalid project directory")
   const root = await realpath(directory)
   if (!(await stat(root)).isDirectory()) throw new Error("Invalid project directory")
+  if (signal) return scan(root, signal)
   const existing = pending.get(root)
   if (existing) return existing
   const check = scan(root).finally(() => pending.delete(root))
@@ -19,10 +46,11 @@ export async function checkProjectDependencies(directory: unknown): Promise<Proj
   return check
 }
 
-async function scan(root: string): Promise<ProjectDependencies> {
+async function scan(root: string, signal?: AbortSignal): Promise<ProjectDependencies> {
   if (!(await stat(join(root, "package.json")).catch(() => undefined))?.isFile()) return { status: "noPackage" }
   return execute("bun", ["outdated", "--recursive", "--no-progress"], {
     cwd: root,
+    signal,
     timeout: 120_000,
     maxBuffer: 16 * 1024 * 1024,
     encoding: "utf8",

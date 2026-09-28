@@ -18,6 +18,7 @@ import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
 import { BrowserTool } from "./browser"
+import { DependencyCheckTool } from "./dependency-check"
 import { Browser } from "@opencode-ai/core/browser"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
@@ -118,6 +119,7 @@ const layer = Layer.effect(
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
     const browser = yield* BrowserTool
+    const dependencies = yield* DependencyCheckTool
     const agent = yield* Agent.Service
     const codeMode = flags.experimentalCodeMode ? yield* Effect.promise(() => import("./code-mode")) : undefined
     const codeModeTool = codeMode ? yield* codeMode.CodeModeTool : undefined
@@ -224,6 +226,7 @@ const layer = Layer.effect(
           search: Tool.init(websearch),
           skill: Tool.init(skilltool),
           browser: Tool.init(browser),
+          dependencies: Tool.init(dependencies),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -248,6 +251,7 @@ const layer = Layer.effect(
             tool.search,
             tool.skill,
             tool.browser,
+            tool.dependencies,
             tool.patch,
             ...(tool.execute ? [tool.execute] : []),
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
