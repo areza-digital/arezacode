@@ -261,18 +261,33 @@
 }
 
 body[data-new-layout] {
-  [data-timeline-row="AssistantPart"]:has([data-component="tool-trigger"], [data-component="context-tool-group-trigger"]).pt-3 {
-    padding-top: 2px !important;
+  [data-timeline-row="AssistantPart"]:has(
+      [data-component="tool-trigger"],
+      [data-component="context-tool-group-trigger"]
+    ).pt-3 {
+    padding-top: 0 !important;
   }
 
   [data-component="collapsible"].tool-collapsible > [data-slot="collapsible-trigger"] {
-    min-height: 28px;
-    height: 28px;
+    min-height: 36px;
+    height: auto;
+  }
+
+  [data-component="context-tool-group-list"] {
+    padding-left: 24px;
+    gap: 0;
+  }
+
+  [data-component="tool-trigger"]:has([data-component="task-tool-icon"], [data-component="task-tool-spinner"]) {
+    [data-slot="basic-tool-tool-indicator"] {
+      display: none;
+    }
   }
 
   [data-component="tool-trigger"],
   [data-component="context-tool-group-trigger"] {
     --tool-row-color: var(--v2-text-text-muted);
+    min-height: 36px;
     color: var(--tool-row-color);
 
     [data-slot="basic-tool-tool-title"],
@@ -303,9 +318,10 @@ body[data-new-layout] {
     box-shadow: none;
 
     [data-component="task-tool-surface"] {
-      padding: 8px 12px;
-      border-radius: 8px;
-      background: var(--v2-background-bg-layer-01);
+      min-height: 36px;
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
     }
 
     [data-component="task-tool-spinner"],
@@ -314,6 +330,8 @@ body[data-new-layout] {
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
+      width: 16px;
+      height: 16px;
 
       [data-component="icon"] {
         color: var(--task-agent-color, var(--v2-icon-icon-base));
@@ -324,8 +342,8 @@ body[data-new-layout] {
       height: 20px;
       font-family: var(--v2-font-family-sans, "Inter", sans-serif);
       font-style: normal;
-      font-weight: 530;
-      font-size: 13px;
+      font-weight: var(--font-weight-medium);
+      font-size: 14px;
       line-height: 20px;
       letter-spacing: -0.04px;
       color: var(--tool-row-color, var(--v2-text-text-muted));
@@ -337,7 +355,7 @@ body[data-new-layout] {
       font-family: var(--v2-font-family-sans, "Inter", sans-serif);
       font-style: normal;
       font-weight: 440;
-      font-size: 13px;
+      font-size: 14px;
       line-height: 20px;
       letter-spacing: -0.04px;
       color: var(--tool-row-color, var(--v2-text-text-muted));
@@ -347,6 +365,8 @@ body[data-new-layout] {
     }
 
     [data-component="session-progress-indicator-v2"] {
+      width: 16px;
+      height: 16px;
       color: var(--task-agent-color, light-dark(var(--v2-text-text-base), #ffffff));
     }
 
@@ -356,7 +376,7 @@ body[data-new-layout] {
       background: transparent;
 
       [data-component="task-tool-surface"] {
-        background: var(--v2-background-bg-layer-01);
+        background: transparent;
       }
     }
   }
