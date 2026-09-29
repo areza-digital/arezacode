@@ -59,7 +59,7 @@ async function expectSelectedFile(page: Page, file: string) {
 }
 
 async function switchSession(page: Page, title: string) {
-  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await page.locator('[data-component="project-sidebar"]').getByRole("button", { name: title, exact: true }).click()
   await expectSessionTitle(page, title)
 }
 
@@ -110,6 +110,7 @@ async function setup(page: Page) {
   await page.addInitScript(
     ({ directory, server, sessions }) => {
       localStorage.setItem("settings.v3", JSON.stringify({ general: { newLayoutDesigns: true } }))
+      localStorage.setItem("opencode.settings.dat:defaultServerUrl", server)
       localStorage.setItem(
         "opencode.global.dat:server",
         JSON.stringify({

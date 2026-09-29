@@ -1,7 +1,89 @@
 import { describe, expect, test } from "bun:test"
 import { invalidateFromWatcher } from "./watcher"
+import { createFileTreeStore } from "./tree-store"
 
 describe("file watcher invalidation", () => {
+  test("ignores in-flight listing failures after the watched folder is removed", async () => {
+    const listing = Promise.withResolvers<never[]>()
+    const errors: string[] = []
+    const tree = createFileTreeStore({
+      scope: () => "/repo",
+      normalizeDir: (path) => path,
+      list: async (path) => {
+        if (path) return listing.promise
+        return [{ path: "src", name: "src", absolute: "/repo/src", type: "directory", ignored: false }]
+      },
+      onError: (message) => errors.push(message),
+    })
+    await tree.listDir("")
+    const pending = tree.listDir("src")
+    invalidateFromWatcher(
+      { type: "file.watcher.updated", properties: { file: "src", event: "unlink" } },
+      {
+        normalize: (path) => path,
+        hasFile: () => false,
+        loadFile: () => {},
+        node: tree.node,
+        isDirLoaded: tree.isLoaded,
+        removeDir: tree.removeDir,
+        refreshDir: () => {},
+      },
+    )
+    listing.reject(new Error("Directory no longer exists"))
+    await pending
+    expect(errors).toEqual([])
+    expect(tree.dirState("src")).toBeUndefined()
+  })
+
+  test("rechecks changes arriving while a directory listing is in flight", async () => {
+    const first = Promise.withResolvers<never[]>()
+    let calls = 0
+    const tree = createFileTreeStore({
+      scope: () => "/repo",
+      normalizeDir: (path) => path,
+      list: async () => {
+        calls++
+        if (calls === 1) return first.promise
+        return [{ path: "new.ts", name: "new.ts", absolute: "/repo/new.ts", type: "file", ignored: false }]
+      },
+      onError: (message) => {
+        throw new Error(message)
+      },
+    })
+    const pending = tree.listDir("")
+    const refresh = tree.listDir("", { force: true })
+    first.resolve([])
+    await Promise.all([pending, refresh])
+    expect(calls).toBe(2)
+    expect(tree.children("").map((node) => node.path)).toEqual(["new.ts"])
+  })
+
+  test("removing and recreating a folder clears its cached listing", async () => {
+    let present = true
+    const tree = createFileTreeStore({
+      scope: () => "/repo",
+      normalizeDir: (path) => path,
+      list: async (path) => {
+        if (path)
+          return [{ path: "src/new.ts", name: "new.ts", absolute: "/repo/src/new.ts", type: "file", ignored: false }]
+        if (!present) return []
+        return [{ path: "src", name: "src", absolute: "/repo/src", type: "directory", ignored: false }]
+      },
+      onError: (message) => {
+        throw new Error(message)
+      },
+    })
+    await tree.listDir("")
+    await tree.listDir("src")
+    present = false
+    await tree.listDir("", { force: true })
+    expect(tree.isLoaded("src")).toBe(false)
+    present = true
+    await tree.listDir("", { force: true })
+    await tree.listDir("src")
+    expect(tree.children("src").map((node) => node.path)).toEqual(["src/new.ts"])
+  })
+
   test("reloads open files and refreshes loaded parent on add", () => {
     const loads: string[] = []
     const refresh: string[] = []

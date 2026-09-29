@@ -1,6 +1,5 @@
 import * as path from "path"
 import { Effect, Schema } from "effect"
-import { Jev } from "@opencode-ai/core/jev"
 import { FileMutation } from "@opencode-ai/core/file-mutation"
 import * as Tool from "./tool"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -276,14 +275,7 @@ export const ApplyPatchTool = Tool.define(
       // Apply the changes
       for (const change of fileChanges) {
         if (change.type === "delete") continue
-        yield* Effect.promise(() =>
-          Jev.guardChange(
-            ctx.sessionID,
-            change.movePath ?? change.filePath,
-            change.type === "move" ? "" : change.oldContent,
-            change.newContent,
-          ),
-        )
+        yield* Tool.guardChange(ctx, change.movePath ?? change.filePath, change.oldContent, change.newContent)
       }
       yield* mutation.applyIfUnchanged(mutations)
       const updates: Array<{ file: string; event: "add" | "change" | "unlink" }> = []

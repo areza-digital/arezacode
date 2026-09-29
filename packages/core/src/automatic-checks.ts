@@ -103,7 +103,7 @@ export async function session(directory: string, sessionID: string) {
             if (content === undefined) { pendingUI.delete(name); continue }
             const before = pendingUI.get(name) ?? originals.get(name) ?? (baseline.revision ? await nativeCommand("git", ["show", `${baseline.revision}:${name}`], { cwd: current.root }).catch(() => "") : "")
             try {
-              await Jev.guardChange(sessionID, path.join(current.root, name), before, content)
+              await Jev.verifyChange(sessionID, path.join(current.root, name), before, content)
               pendingUI.delete(name)
             } catch (error) {
               pendingUI.set(name, before)

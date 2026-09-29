@@ -6,10 +6,51 @@ import {
   createOpenReviewFile,
   createOpenSessionFileTab,
   createSessionTabs,
+  flowFileFromTool,
   focusTerminalById,
   getTabReorderIndex,
+  parseFlowDocument,
   shouldShowFileTree,
 } from "./helpers"
+
+test("flow document keeps the everyday, technical and wireframe stages separate", () => {
+  const source = `# Sign in
+
+## For everyone
+1. Press Sign in -> see a loading state.
+
+## Technical details
+1. src/login.ts:42 sends the request to POST /login.
+
+## Wireframe
+> **1. Sign in**
+> Press Sign in -> 2. Checking details
+`
+  expect(parseFlowDocument(source)).toEqual({
+    everyone: "1. Press Sign in -> see a loading state.",
+    technical: "1. src/login.ts:42 sends the request to POST /login.",
+    wireframe: "> **1. Sign in**\n> Press Sign in -> 2. Checking details",
+  })
+  expect(parseFlowDocument("# Ordinary Markdown\n\n## Wireframe\nNothing else")).toBeUndefined()
+})
+
+test("only successful flow-file writes qualify to open the analysis", () => {
+  const patchText = "*** Begin Patch\n*** Add File: flows/login.flow.md\n+## For everyone\n*** End Patch"
+  expect(flowFileFromTool({ tool: "apply_patch", state: { status: "completed", input: { patchText } } })).toBe(
+    "flows/login.flow.md",
+  )
+  expect(flowFileFromTool({ tool: "apply_patch", state: { status: "error", input: { patchText } } })).toBeUndefined()
+  expect(
+    flowFileFromTool({ tool: "read", state: { status: "completed", input: { filePath: "flows/login.flow.md" } } }),
+  ).toBeUndefined()
+  for (const tool of ["write", "edit"]) {
+    for (const key of ["path", "filePath"]) {
+      expect(flowFileFromTool({ tool, state: { status: "completed", input: { [key]: "flows/login.flow.md" } } })).toBe(
+        "flows/login.flow.md",
+      )
+    }
+  }
+})
 
 describe("shouldShowFileTree", () => {
   test("does not reserve space for a disabled file tree", () => {

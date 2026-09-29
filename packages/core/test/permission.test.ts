@@ -103,6 +103,34 @@ function waitForRequest() {
 }
 
 describe("PermissionV2", () => {
+  it.effect("requires a separate UI scope approval even in full mode and never remembers it", () =>
+    Effect.gen(function* () {
+      yield* setup([
+        { action: "*", resource: "*", effect: "allow" },
+        { action: "edit", resource: "secret", effect: "deny" },
+      ])
+      const database = yield* Database.Service
+      yield* database.db
+        .update(SessionTable)
+        .set({ metadata: { approvalMode: "full" } })
+        .where(eq(SessionTable.id, SessionV2.ID.make("ses_test")))
+        .run()
+        .pipe(Effect.orDie)
+      const service = yield* PermissionV2.Service
+      const saved = yield* PermissionSaved.Service
+      const review = { action: "edit", save: ["*"], metadata: { uiScopeGuard: true, diff: "+requested change" } }
+      const first = yield* service.ask(assertion(review))
+      expect(first.effect).toBe("ask")
+      expect((yield* service.get(first.id))?.metadata?.approvalMode).toBe("ask")
+      yield* service.reply({ requestID: first.id, reply: "always" })
+      expect(yield* saved.list({ projectID: Project.ID.global })).toHaveLength(0)
+      const second = yield* service.ask(assertion({ ...review, id: PermissionV2.ID.create() }))
+      expect(second.effect).toBe("ask")
+      yield* service.reply({ requestID: second.id, reply: "reject" })
+      expect((yield* service.ask(assertion({ ...review, resources: ["secret"] }))).effect).toBe("deny")
+    }),
+  )
+
   it.effect("enforces approval modes, preserves denials, and inherits a parent's mode", () =>
     Effect.gen(function* () {
       yield* setup([{ action: "*", resource: "*", effect: "allow" }, { action: "edit", resource: "secret", effect: "deny" }])

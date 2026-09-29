@@ -241,7 +241,7 @@ function ProjectFoldersField(props: {
           {(folder) => (
             <div class="flex min-w-0 items-center gap-2">
               <span class="min-w-0 flex-1 truncate" title={folder}>
-                {folder}
+                {folder.split(/[\\/]/).filter(Boolean).slice(-2).join("/") || folder}
               </span>
               <ButtonV2
                 type="button"

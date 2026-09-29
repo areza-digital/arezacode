@@ -14,7 +14,6 @@ import { InstanceState } from "@/effect/instance-state"
 import { trimDiff } from "./edit"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import * as Bom from "@/util/bom"
-import { Jev } from "@opencode-ai/core/jev"
 import { FileMutation } from "@opencode-ai/core/file-mutation"
 
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
@@ -68,7 +67,7 @@ export const WriteTool = Tool.define(
             },
           })
 
-          yield* Effect.promise(() => Jev.guardChange(ctx.sessionID, filepath, contentOld, contentNew))
+          yield* Tool.guardChange(ctx, filepath, contentOld, contentNew)
           yield* mutation.applyIfUnchanged([
             { target, expected: source.content, content: Bom.join(contentNew, desiredBom) },
           ])

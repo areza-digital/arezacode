@@ -35,6 +35,7 @@ import { applyFileListKeyDown, SessionFileListV2 } from "@/pages/session/v2/sess
 type ReviewDiff = FileDiffInfo | SnapshotFileDiff | VcsFileDiff
 
 export type ReviewPanelV2Props = {
+  directory?: string
   title?: JSX.Element
   empty?: JSX.Element
   diffs: () => ReviewDiff[]
@@ -60,14 +61,24 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
   const sdk = useSDK()
 
   const incoming = createMemo(() => props.diffs().filter(filterRenderableDiff))
-  const [display, setDisplay] = createStore({ diffs: incoming(), exiting: false })
-  createEffect(on(incoming, (next) => {
-    if (next.length || !display.diffs.length || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setDisplay({ diffs: next, exiting: false })
-      return
-    }
-    setDisplay("exiting", true)
-  }))
+  const [display, setDisplay] = createStore({ diffs: incoming(), exiting: false, directory: props.directory })
+  createEffect(
+    on(
+      () => [incoming(), props.directory] as const,
+      ([next, directory]) => {
+        if (
+          directory !== display.directory ||
+          next.length ||
+          !display.diffs.length ||
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ) {
+          setDisplay({ diffs: next, exiting: false, directory })
+          return
+        }
+        setDisplay("exiting", true)
+      },
+    ),
+  )
   const diffs = () => display.diffs
   const finishExit = (event: TransitionEvent) => {
     if (event.target !== event.currentTarget || event.propertyName !== "opacity" || !display.exiting) return
@@ -128,7 +139,7 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
 
   const readFile = async (path: string) =>
     sdk()
-      .client.file.read({ path })
+      .client.file.read({ path, directory: props.directory })
       .then((x) => x.data)
       .catch((error) => {
         console.debug("[session-review-v2] failed to read file", { path, error })
@@ -176,13 +187,13 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
           onTransitionCancel={finishExit}
           class="flex min-h-0 flex-1 flex-col overflow-hidden"
         >
-          <Show when={activeDiff()} keyed>
-            {(file) => (
+          <Show when={activeDiff() && `${props.directory ?? sdk().directory}\0${activeDiff()}`} keyed>
+            {(key) => (
               <Show when={activeItem()}>
                 {(diff) => (
                   <SessionReviewFilePreviewV2
                     onRendered={() => setRenderedItem(diff())}
-                    file={file}
+                    file={key.slice(key.indexOf("\0") + 1)}
                     diff={diff()}
                     diffStyle={props.diffStyle}
                     expandMode={props.state.expandMode()}

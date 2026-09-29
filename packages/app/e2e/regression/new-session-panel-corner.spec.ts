@@ -82,6 +82,7 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(
     ({ directory, draftID, server }) => {
       localStorage.setItem("settings.v3", JSON.stringify({ general: { newLayoutDesigns: true } }))
+      localStorage.setItem("opencode.settings.dat:defaultServerUrl", server)
       localStorage.setItem("opencode-theme-id", "oc-2")
       localStorage.setItem("opencode-color-scheme", "dark")
       localStorage.setItem(
@@ -98,6 +99,22 @@ test.beforeEach(async ({ page }) => {
     },
     { directory, draftID, server },
   )
+})
+
+test("keeps a standalone chat out of the sidebar until it is sent", async ({ page }) => {
+  await page.goto(`/new-session?draftId=${draftID}`)
+  const sidebar = page.locator('[data-component="project-sidebar"]')
+  const editor = page.locator('[data-component="prompt-input"]')
+  await expectAppVisible(editor)
+  await sidebar.getByRole("button", { name: "New chat", exact: true }).click()
+  await expect(page).not.toHaveURL(new RegExp(`draftId=${draftID}$`))
+  await expect(editor).toBeEmpty()
+  await expect(sidebar.locator('[data-component="home-draft-row"]')).toHaveCount(0)
+  await editor.fill("Unsent standalone chat")
+  await expect(editor).toHaveText("Unsent standalone chat")
+  await expect(sidebar.locator('[data-component="home-draft-row"]')).toHaveCount(0)
+  await expect(sidebar.getByText("Chats", { exact: true })).toHaveCount(0)
+  await page.screenshot({ path: "/tmp/areza-unsent-standalone-chat.png" })
 })
 
 test("adds a sidebar chat only after sending the first message", async ({ page }) => {
@@ -149,8 +166,19 @@ test("adds a sidebar chat only after sending the first message", async ({ page }
     },
   )
   await page.route(
-    (url) => url.pathname === "/api/session",
-    (route) => (created.length ? route.fulfill({ headers, json: { data: [session], cursor: {} } }) : route.fallback()),
+    (url) => url.pathname === "/api/session" || url.pathname === "/experimental/session",
+    (route) =>
+      created.length
+        ? route.fulfill({
+            headers,
+            json:
+              new URL(route.request().url()).pathname === "/api/session" ? { data: [session], cursor: {} } : [session],
+          })
+        : route.fallback(),
+  )
+  await page.route(
+    (url) => url.pathname === `/api/session/${sessionID}`,
+    (route) => route.fulfill({ headers, json: { data: session } }),
   )
   await page.route(
     (url) => url.pathname === `/session/${sessionID}`,
@@ -165,12 +193,13 @@ test("adds a sidebar chat only after sending the first message", async ({ page }
   const sidebar = page.locator('[data-component="project-sidebar"]')
   const editor = page.locator('[data-component="prompt-input"]')
   await expectAppVisible(editor)
-  await expect(sidebar.locator('[data-component="home-session-row"]')).toHaveCount(70)
+  await expect(sidebar.locator('[data-component="home-session-row"]')).toHaveCount(64)
+  await expect(sidebar.locator('[data-component="home-draft-row"]')).toHaveCount(0)
   await editor.fill("/")
   await expect(editor).toHaveText("/")
-  await expect(sidebar.locator('[data-component="sidebar-draft-row"]')).toHaveCount(0)
+  await expect(sidebar.locator('[data-component="home-draft-row"]')).toHaveCount(0)
   await editor.fill("First sent message")
-  await expect(sidebar.locator('[data-component="home-session-row"]')).toHaveCount(70)
+  await expect(sidebar.locator('[data-component="home-session-row"]')).toHaveCount(64)
   expect(created).toHaveLength(0)
   await page.screenshot({ path: "/tmp/areza-unsent-draft.png" })
   const sent = page.waitForRequest(
@@ -185,7 +214,7 @@ test("adds a sidebar chat only after sending the first message", async ({ page }
   await expect(
     sidebar.locator('[data-component="home-session-row"]').filter({ hasText: "First sent message" }),
   ).toBeVisible()
-  await expect(sidebar.locator('[data-component="sidebar-draft-row"]')).toHaveCount(0)
+  await expect(sidebar.locator('[data-component="home-draft-row"]')).toHaveCount(0)
   await page.screenshot({ path: "/tmp/areza-first-sent-chat.png" })
 })
 
@@ -234,7 +263,7 @@ test("shows ArezaCode branding and keeps version inside settings", async ({ page
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(`/new-session?draftId=${draftID}`)
   const sidebar = page.locator('[data-component="project-sidebar"]')
-  await expect(sidebar.locator('[data-component="home-session-row"]')).toHaveCount(70)
+  await expect(sidebar.locator('[data-component="home-session-row"]')).toHaveCount(64)
   await expect(sidebar.locator('[data-component="sidebar-footer"]')).toHaveCount(0)
   await expect(page).toHaveTitle("ArezaCode")
   await sidebar.getByRole("button", { name: "Settings", exact: true }).click()
@@ -263,7 +292,7 @@ test("scrolls project content between fixed search and footer controls", async (
   const settings = sidebar.getByRole("button", { name: "Settings", exact: true })
   const help = sidebar.getByRole("button", { name: "Help", exact: true })
   const viewport = sidebar.locator('[data-slot="home-projects-scroll"] .scroll-view__viewport')
-  await expect(sidebar.locator('[data-component="home-session-row"]')).toHaveCount(70)
+  await expect(sidebar.locator('[data-component="home-session-row"]')).toHaveCount(64)
   await sidebar.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)))
   const before = { search: await search.boundingBox(), settings: await settings.boundingBox(), help: await help.boundingBox() }
   expect(await viewport.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
@@ -298,11 +327,10 @@ test("creates new chats without flashing the startup flower", async ({ page }) =
     }).observe(document.body, { childList: true, subtree: true })
   })
   for (let index = 0; index < 3; index++) {
-    const previous = page.url()
     await row.hover()
     await newChat.click()
     await expect(page).toHaveURL(/\/new-session\?draftId=/)
-    await expect.poll(() => page.url()).not.toBe(previous)
+    await expect(page.locator('[data-component="prompt-input"]')).toBeEmpty()
     await expectAppVisible(page.locator('[data-component="prompt-input"]'))
     await expect(page.locator("body")).toHaveAttribute("data-loading-flashes", "0")
   }
@@ -354,9 +382,9 @@ test("keeps project accordions independent with scoped chats and hover feedback"
   await expect(firstChat).toBeVisible()
   await expect(secondChat).toBeVisible()
   await expect(sidebar.locator('[data-component="home-session-row"]')).toHaveCount(2)
-  await expect(secondChat).toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
+  await expect(secondChat.locator("..")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
   await secondChat.hover()
-  await expect(secondChat).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
+  await expect(secondChat.locator("..")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
   await page.screenshot({ path: "/tmp/areza-projects-open-hover.png" })
   await first.click()
   await expect(first).toHaveAttribute("aria-expanded", "false")
@@ -460,7 +488,7 @@ test("animates project disclosure and reverses without losing chats", async ({ p
   const disclosure = sidebar.locator('[data-action="home-project-collapse"]')
   const accordion = sidebar.locator('[data-component="project-accordion"]')
   const chats = sidebar.locator('[data-component="home-session-row"]')
-  await expect(chats).toHaveCount(70)
+  await expect(chats).toHaveCount(64)
   await expect(accordion.locator(":scope > div")).toHaveCSS("transform", "none")
   await expect(accordion).toHaveCSS("opacity", "1")
   await sidebar.getByRole("searchbox", { name: "Search sessions" }).fill("Project chat 70")
@@ -520,7 +548,7 @@ test("keeps all project chats under the project and preserves the composer when 
   const composer = page.locator('[data-component="prompt-input"]')
   await expect(composer).toBeVisible()
   await expect(disclosure).toHaveAttribute("aria-expanded", "true")
-  await expect(chats).toHaveCount(70)
+  await expect(chats).toHaveCount(64)
   await sidebar.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)))
   await expect(chats.filter({ hasText: /^Project chat 70$/ }).locator('[data-status="complete"]')).toBeVisible()
   const projectBox = await project.boundingBox()
@@ -537,7 +565,7 @@ test("keeps all project chats under the project and preserves the composer when 
   expect(settingsBox!.y).toBeGreaterThan(750)
   await page.screenshot({ path: testInfo.outputPath("sidebar-expanded.png") })
   await project.click()
-  await expect(chats).toHaveCount(70)
+  await expect(chats).toHaveCount(64)
   await disclosure.click()
   await expect(disclosure).toHaveAttribute("aria-expanded", "false")
   await page.mouse.move(800, 100)
@@ -547,11 +575,11 @@ test("keeps all project chats under the project and preserves the composer when 
   await expect(chats.first()).not.toBeInViewport()
   await disclosure.click()
   await expect(sidebar.locator('[data-component="project-working"]')).toBeHidden()
-  await expect(chats).toHaveCount(70)
+  await expect(chats).toHaveCount(64)
   await sidebar.getByRole("searchbox", { name: "Search sessions" }).fill("Project chat 1")
   await expect(chats).toHaveCount(11)
   await sidebar.getByRole("searchbox", { name: "Search sessions" }).clear()
-  await expect(chats).toHaveCount(70)
+  await expect(chats).toHaveCount(64)
   await expect(page.locator('[data-slot="titlebar-tabs"]')).toHaveCount(0)
   await expect(sidebar).toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
   await expect(sidebar).toHaveCSS("border-right-width", "0px")
@@ -603,7 +631,7 @@ test("keeps all project chats under the project and preserves the composer when 
   await page.reload({ waitUntil: "domcontentloaded" })
   await expect(toggle).toHaveAttribute("aria-pressed", "false")
   await toggle.click()
-  await expect(chats).toHaveCount(70)
+  await expect(chats).toHaveCount(64)
   await expect(sidebar).toHaveCSS("width", `${width + 16}px`)
   await chats.filter({ hasText: /^Project chat 70$/ }).click()
   await expect(page).toHaveURL(/\/session\/ses_sidebar_069$/)

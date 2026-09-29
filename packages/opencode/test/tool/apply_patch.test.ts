@@ -145,6 +145,24 @@ describe("tool.apply_patch freeform", () => {
     )
   }
 
+  it.instance("relocates existing UI without treating its unchanged copy as new content", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const { ctx } = makeCtx()
+      const content = "export const Card = () => <p>Ready · Today</p>\n"
+      yield* writeText(path.join(test.directory, "card.tsx"), content)
+      yield* execute(
+        {
+          patchText:
+            "*** Begin Patch\n*** Update File: card.tsx\n*** Move to: pages/card.tsx\n@@\n export const Card = () => <p>Ready · Today</p>\n*** End Patch",
+        },
+        ctx,
+      )
+      expect(yield* readText(path.join(test.directory, "pages/card.tsx"))).toBe(content)
+      yield* expectReadFailure(path.join(test.directory, "card.tsx"))
+    }),
+  )
+
   it.instance("runs every change guard before committing any patch files", () =>
     Effect.gen(function* () {
       const test = yield* TestInstance

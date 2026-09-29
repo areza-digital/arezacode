@@ -105,7 +105,12 @@
 
 [data-message-navigation] > .message-timeline-scroll {
   margin-left: 32px;
+  padding-right: 32px;
   width: calc(100% - 32px);
+}
+
+.message-timeline-scroll[data-scroll-below] > .scroll-view__viewport {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
 }
 
 [data-component="message-navigator"][data-keyboard] * {
@@ -166,6 +171,10 @@
   border-bottom: 1px solid var(--border-weak-base);
   padding: 8px 0;
 
+  &[data-expanded] {
+    padding-bottom: 0;
+  }
+
   > [data-slot="collapsible-trigger"] {
     width: fit-content;
     gap: 6px;
@@ -181,6 +190,10 @@
 
 .completed-work-scroll {
   max-height: min(320px, 50vh);
+
+  > .scroll-view__viewport {
+    padding-bottom: 8px;
+  }
 }
 
 [data-component="session-turn"] [data-completed-card] {
@@ -346,6 +359,7 @@
   }
   [data-message-navigation] > .message-timeline-scroll {
     margin-left: 0;
+    padding-right: 0;
     width: 100%;
   }
 }

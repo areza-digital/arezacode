@@ -168,12 +168,24 @@ describeWatcher("Watcher", () => {
     ),
   )
 
-  it.live("skips non-git roots", () =>
+  it.live("publishes manifest additions, changes, and removals in non-git roots", () =>
     withTmp((directory) =>
       Effect.gen(function* () {
         const fs = yield* FSUtil.Service
-        const file = path.join(directory, "plain.txt")
-        yield* noUpdate((event) => event.file === file, fs.writeFileString(file, "plain"))
+        const file = path.join(directory, "package.json")
+        yield* ready(directory)
+        for (const item of [
+          { event: "add" as const, trigger: fs.writeFileString(file, "{}") },
+          { event: "change" as const, trigger: fs.writeFileString(file, '{"private":true}') },
+          { event: "unlink" as const, trigger: fs.remove(file) },
+        ]) {
+          expect(yield* nextUpdate((event) => event.file === file && event.event === item.event, item.trigger)).toEqual(
+            {
+              file,
+              event: item.event,
+            },
+          )
+        }
       }),
     ),
   )

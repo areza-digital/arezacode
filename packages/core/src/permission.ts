@@ -157,6 +157,7 @@ const layer = Layer.effect(
       const config = yield* configured(input.sessionID, input.agent)
       const rules = config.rules
       if (denied(input, rules)) return { effect: "deny" as const, rules }
+      if (input.metadata?.uiScopeGuard === true) return { effect: "ask" as const, rules, mode: "ask" as const }
       const approval = approvalEffect(config.mode, input.action)
       if (approval) return { effect: approval, rules, mode: config.mode }
       const all = [...rules, ...(yield* savedRules())]
@@ -251,7 +252,11 @@ const layer = Layer.effect(
             return
           }
 
-          if (input.reply === "always" && existing.request.save?.length) {
+          if (
+            input.reply === "always" &&
+            existing.request.save?.length &&
+            existing.request.metadata?.uiScopeGuard !== true
+          ) {
             yield* saved.add({
               projectID: location.project.id,
               action: existing.request.action,
@@ -260,10 +265,16 @@ const layer = Layer.effect(
           }
           yield* Deferred.succeed(existing.deferred, undefined)
           pending.delete(input.requestID)
-          if (input.reply !== "always" || !existing.request.save?.length) return
+          if (
+            input.reply !== "always" ||
+            !existing.request.save?.length ||
+            existing.request.metadata?.uiScopeGuard === true
+          )
+            return
 
           const rememberedRules = yield* savedRules()
           for (const [id, item] of pending) {
+            if (item.request.metadata?.uiScopeGuard === true) continue
             const input = { ...item.request }
             const config = yield* configured(item.request.sessionID, item.agent).pipe(
               EffectRuntime.catchTag("Session.NotFoundError", () => EffectRuntime.succeed(undefined)),

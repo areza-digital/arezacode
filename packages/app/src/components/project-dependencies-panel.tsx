@@ -22,23 +22,50 @@ export function ProjectDependenciesPanel(props: { active: boolean }) {
     query: "",
   })
   let revision = 0
+  let queued = false
   createEffect(() => {
     sdk().directory
     server.key
     revision++
+    queued = false
     setState({ data: undefined, loading: false, query: "" })
   })
   onCleanup(() => revision++)
   const check = async () => {
-    if (!available() || state.loading) return
+    if (!available()) return
+    if (state.loading) {
+      queued = true
+      return
+    }
+    queued = false
     const current = ++revision
-    setState({ loading: true, data: undefined })
+    setState({ loading: true })
     const data = await platform.checkDependencies!(sdk().directory).catch(() => ({ status: "failed" as const }))
-    if (revision === current) setState({ data, loading: false })
+    if (revision !== current) return
+    setState({ data, loading: false })
+    if (queued && props.active) void check()
   }
   createEffect(
     on([() => props.active, () => sdk().directory, () => server.key, available], () => {
-      if (props.active) void check()
+      if (!props.active || !available()) return
+      void check()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const refresh = () => {
+        clearTimeout(timer)
+        timer = setTimeout(() => void check(), 300)
+      }
+      const stop = sdk().event.listen((event) => {
+        if (event.details.type !== "file.watcher.updated") return
+        if (!/(^|[/\\])(package\.json|bun\.lockb?|bunfig\.toml)$/.test(event.details.properties.file)) return
+        refresh()
+      })
+      window.addEventListener("focus", refresh)
+      onCleanup(() => {
+        stop()
+        clearTimeout(timer)
+        queued = false
+        window.removeEventListener("focus", refresh)
+      })
     }),
   )
   const result = () => (state.data?.status === "checked" ? state.data : undefined)
@@ -67,7 +94,7 @@ export function ProjectDependenciesPanel(props: { active: boolean }) {
             />
           }
         >
-          <Show when={state.loading}>
+          <Show when={state.loading && !state.data}>
             <div role="status" class="flex flex-1 flex-col">
               <EmptyState
                 icon={<Icon name="checklist" />}

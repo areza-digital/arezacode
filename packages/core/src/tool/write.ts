@@ -84,8 +84,31 @@ const layer = Layer.effectDiscard(
                   agent: context.agent,
                   source,
                 })
-                return yield* files.writeTextPreservingBom({ target, content: input.content, sessionID: context.sessionID })
-              }).pipe(Effect.mapError((error) => new ToolFailure({ message: error instanceof FileMutation.ReuseError ? error.message : `Unable to write ${input.path}` }))),
+                return yield* files.writeTextPreservingBom({
+                  target,
+                  content: input.content,
+                  sessionID: context.sessionID,
+                  approveUI: (metadata) =>
+                    permission
+                      .assert({
+                        action: "edit",
+                        resources: [target.resource],
+                        sessionID: context.sessionID,
+                        agent: context.agent,
+                        source,
+                        metadata,
+                      })
+                      .pipe(Effect.orDie),
+                })
+              }).pipe(
+                Effect.mapError(
+                  (error) =>
+                    new ToolFailure({
+                      message:
+                        error instanceof FileMutation.ReuseError ? error.message : `Unable to write ${input.path}`,
+                    }),
+                ),
+              ),
           }),
           "edit",
         ),

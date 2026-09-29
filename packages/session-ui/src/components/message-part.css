@@ -424,16 +424,9 @@
     background: none;
   }
 
-  &[data-scrollable] {
+  &.scroll-view {
     height: auto;
     max-height: 240px;
-    overflow-y: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-
-    &::-webkit-scrollbar {
-      display: none;
-    }
 
     [data-component="markdown"] {
       overflow: visible;
@@ -453,6 +446,7 @@
 
   [data-slot="bash-copy"] {
     position: absolute;
+    z-index: 1;
     top: 4px;
     right: 4px;
     opacity: 0;
@@ -468,14 +462,7 @@
 
   [data-slot="bash-scroll"] {
     width: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
     max-height: 240px;
-
-    scrollbar-width: none;
-    &::-webkit-scrollbar {
-      display: none;
-    }
   }
 
   [data-slot="bash-pre"] {

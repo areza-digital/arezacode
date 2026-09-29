@@ -68,6 +68,7 @@ test("opens and searches project files inline", async ({ page }) => {
   await page.addInitScript(
     ({ directory, server, sessionID }) => {
       localStorage.setItem("settings.v3", JSON.stringify({ general: { newLayoutDesigns: true } }))
+      localStorage.setItem("opencode.settings.dat:defaultServerUrl", server)
       localStorage.setItem(
         "opencode.global.dat:server",
         JSON.stringify({
@@ -98,6 +99,7 @@ test("opens and searches project files inline", async ({ page }) => {
   const sidebar = panel.locator('[data-slot="session-review-v2-sidebar"]')
   const sidebarToggle = panel.getByRole("button", { name: "Toggle file tree" })
   const contextButton = page.getByRole("button", { name: "View context usage" })
+  await expect(panel.getByRole("button", { name: "Git changes", exact: true })).toBeVisible()
   await contextButton.click()
   await expect(panel.getByRole("tab", { name: "Context" })).toHaveAttribute("data-selected", "")
   await panel.getByRole("button", { name: "New tab", exact: true }).click()

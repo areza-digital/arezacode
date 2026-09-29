@@ -1,5 +1,32 @@
 import { describe, expect, test } from "bun:test"
-import { filterReviewFiles, reviewDiffDirectory, reviewDiffKinds, reviewDiffNeedsLoad } from "./review-diff-kinds"
+import {
+  filterReviewFiles,
+  reviewDirectories,
+  reviewDiffDirectory,
+  reviewDiffKinds,
+  reviewDiffNeedsLoad,
+  reviewFilePath,
+} from "./review-diff-kinds"
+
+test("review file actions resolve against the selected repository", () => {
+  expect(reviewFilePath("/projects/web", "src/app.ts", "/projects/api")).toBe("../web/src/app.ts")
+  expect(reviewFilePath("/projects/web", "src/app.ts", "/projects/web")).toBe("src/app.ts")
+  expect(reviewFilePath("/repo", "src/app.ts", "/repo/packages/app")).toBe("../../src/app.ts")
+  expect(reviewFilePath("C:\\projects\\web", "src/app.ts", "C:\\projects\\api")).toBe("../web/src/app.ts")
+})
+
+test("review follows project assignments and current source folders while preserving worktree roots", () => {
+  const projects = [
+    { worktree: "/old", folders: ["/old"] },
+    { worktree: "/web", folders: ["/web", "/api/", "/api"], sandboxes: ["/web-feature"] },
+  ]
+  expect(reviewDirectories(projects, "/old", "/web")).toEqual(["/web", "/api"])
+  expect(reviewDirectories(projects, "/api")).toEqual(["/web", "/api"])
+  expect(reviewDirectories(projects, "/web-feature")).toEqual(["/web-feature", "/web", "/api"])
+  projects[1]!.folders = ["/api"]
+  expect(reviewDirectories(projects, "/web")).toEqual(["/api"])
+  expect(reviewDirectories([], "/unassigned")).toEqual(["/unassigned"])
+})
 
 describe("reviewDiffKinds", () => {
   test("maps file and directory kinds", () => {

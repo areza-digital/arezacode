@@ -1361,7 +1361,7 @@ export function MessageTimeline(props: {
                   <Collapsible.Arrow />
                 </Collapsible.Trigger>
                 <Collapsible.Content>
-                  <ScrollView class="completed-work-scroll" orientation="vertical">
+                  <ScrollView class="completed-work-scroll scroll-view--fade" orientation="vertical">
                     <For each={workRow().groups}>{(group) => (
                       <div class="py-1">
                         {renderAssistantPartGroup(() => ({ userMessageID: workRow().userMessageID, group, previousAssistantPart: false }), onSizeChange, false)}
@@ -1610,7 +1610,7 @@ export function MessageTimeline(props: {
                 </HoverCard.Trigger>
                 <HoverCard.Portal>
                   <HoverCard.Content data-component="chat-changes-preview">
-                    <ScrollView class="chat-changes-scroll">
+                    <ScrollView class="chat-changes-scroll scroll-view--fade">
                     <ul aria-label={language.t("session.review.filesChanged", { count: props.diffs.length })}>
                       <For each={props.diffs}>
                         {(diff) => (
@@ -1636,6 +1636,7 @@ export function MessageTimeline(props: {
       </div>
       <ScrollView
         viewportRef={bindListRoot}
+        thumbInsetTop={showHeader() ? 64 : 0}
         onWheel={handleListWheel}
         onTouchStart={handleListTouchStart}
         onTouchMove={handleListTouchMove}

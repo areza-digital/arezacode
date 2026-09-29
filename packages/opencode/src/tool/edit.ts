@@ -5,7 +5,6 @@
 
 import * as path from "path"
 import { Effect, Schema, Semaphore } from "effect"
-import { Jev } from "@opencode-ai/core/jev"
 import { FileMutation } from "@opencode-ai/core/file-mutation"
 import * as Tool from "./tool"
 import { LSP } from "@/lsp/lsp"
@@ -115,7 +114,7 @@ export const EditTool = Tool.define(
                     diff,
                   },
                 })
-                yield* Effect.promise(() => Jev.guardChange(ctx.sessionID, filePath, contentOld, contentNew))
+                yield* Tool.guardChange(ctx, filePath, contentOld, contentNew)
                 yield* mutation.applyIfUnchanged([
                   { target, expected: undefined, content: Bom.join(contentNew, desiredBom) },
                 ])
@@ -162,7 +161,7 @@ export const EditTool = Tool.define(
                 },
               })
 
-              yield* Effect.promise(() => Jev.guardChange(ctx.sessionID, filePath, contentOld, contentNew))
+              yield* Tool.guardChange(ctx, filePath, contentOld, contentNew)
               yield* mutation.writeIfUnchanged({
                 target,
                 expected: source.content,

@@ -80,9 +80,11 @@ const layer = Layer.effect(
         const rule =
           configured.action === "deny"
             ? configured
-            : approval
-              ? { ...configured, action: approval }
-              : evaluate(request.permission, pattern, ruleset, approved)
+            : request.metadata.uiScopeGuard === true
+              ? { ...configured, action: "ask" as const }
+              : approval
+                ? { ...configured, action: approval }
+                : evaluate(request.permission, pattern, ruleset, approved)
         yield* Effect.logInfo("evaluated", { permission: request.permission, pattern, action: rule })
         if (rule.action === "deny") {
           return yield* new PermissionV1.DeniedError({
@@ -101,7 +103,14 @@ const layer = Layer.effect(
         sessionID: request.sessionID,
         permission: request.permission,
         patterns: request.patterns,
-        metadata: { ...request.metadata, ...(approval ? { approvalMode: mode } : {}) },
+        metadata: {
+          ...request.metadata,
+          ...(request.metadata.uiScopeGuard === true
+            ? { approvalMode: "ask" }
+            : approval
+              ? { approvalMode: mode }
+              : {}),
+        },
         always: request.always,
         tool: request.tool,
       }
@@ -152,7 +161,7 @@ const layer = Layer.effect(
       }
 
       yield* Deferred.succeed(existing.deferred, undefined)
-      if (input.reply === "once") return
+      if (input.reply === "once" || existing.info.metadata.uiScopeGuard === true) return
 
       for (const pattern of existing.info.always) {
         approved.push({
@@ -163,7 +172,12 @@ const layer = Layer.effect(
       }
 
       for (const [id, item] of pending.entries()) {
-        if (item.info.sessionID !== existing.info.sessionID || item.info.metadata.approvalMode) continue
+        if (
+          item.info.sessionID !== existing.info.sessionID ||
+          item.info.metadata.approvalMode ||
+          item.info.metadata.uiScopeGuard === true
+        )
+          continue
         const ok = item.info.patterns.every(
           (pattern) => evaluate(item.info.permission, pattern, approved).action === "allow",
         )

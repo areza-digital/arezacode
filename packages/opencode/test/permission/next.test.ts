@@ -1255,6 +1255,16 @@ it.instance(
         .run()
         .pipe(Effect.orDie)
       yield* ask(input)
+      const review = { ...input, permission: "edit", metadata: { uiScopeGuard: true, diff: "+requested change" } }
+      const guarded = yield* ask(review).pipe(Effect.forkScoped)
+      const guardedPending = yield* waitForPending(1)
+      expect(guardedPending[0].metadata.approvalMode).toBe("ask")
+      yield* reply({ requestID: guardedPending[0].id, reply: "always" })
+      yield* Fiber.join(guarded)
+      const repeated = yield* ask(review).pipe(Effect.forkScoped)
+      expect(yield* waitForPending(1)).toHaveLength(1)
+      yield* rejectAll()
+      yield* Fiber.await(repeated)
       const denied = yield* ask({ ...input, ruleset: [{ permission: "*", pattern: "*", action: "deny" }] }).pipe(
         Effect.exit,
       )

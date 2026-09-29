@@ -195,6 +195,17 @@ const layer = Layer.effectDiscard(
                   files.writeIfUnchanged({
                     target,
                     sessionID: context.sessionID,
+                    approveUI: (metadata) =>
+                      permission
+                        .assert({
+                          action: "edit",
+                          resources: [target.resource],
+                          sessionID: context.sessionID,
+                          agent: context.agent,
+                          source: permissionSource,
+                          metadata,
+                        })
+                        .pipe(Effect.orDie),
                     expected: source.content,
                     content: joinBom(next.text, source.bom || next.bom),
                   }),

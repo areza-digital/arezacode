@@ -19,6 +19,7 @@ export interface ScrollViewProps extends ComponentProps<"div"> {
   viewportRef?: (el: HTMLDivElement) => void
   viewportClass?: string
   scrollElement?: Accessor<HTMLDivElement | undefined>
+  thumbInsetTop?: number
   orientation?: "vertical" | "horizontal" | "both"
   /**
    * `hover`: show while hovered or scrolling. `scroll`: show only while scrolling.
@@ -141,6 +142,7 @@ export function ScrollView(props: ScrollViewProps) {
       "viewportRef",
       "viewportClass",
       "scrollElement",
+      "thumbInsetTop",
       "orientation",
       "thumbVisibility",
       "thumbContainer",
@@ -184,6 +186,8 @@ export function ScrollView(props: ScrollViewProps) {
     showHorizontal: false,
     above: false,
     below: false,
+    before: false,
+    after: false,
   })
   const isHovered = () => state.isHovered
   const isDragging = () => state.isDragging
@@ -216,7 +220,7 @@ export function ScrollView(props: ScrollViewProps) {
     if (!viewportRef) return
     const { scrollTop, scrollHeight, clientHeight } = viewportRef
 
-    const trackHeight = Math.max(0, (thumbMount()?.clientHeight || clientHeight) - 16)
+    const trackHeight = Math.max(0, (thumbMount()?.clientHeight || clientHeight) - (local.thumbInsetTop ?? 0) - 16)
     const height = Math.min(trackHeight, Math.max(32, (clientHeight / Math.max(1, scrollHeight)) * trackHeight))
     const trackWidth = Math.max(0, viewportRef.clientWidth - 16)
     const width = Math.min(
@@ -230,6 +234,8 @@ export function ScrollView(props: ScrollViewProps) {
     setState({
       above: scrollTop > 1,
       below: scrollTop + clientHeight < scrollHeight - 1,
+      before: Math.abs(viewportRef.scrollLeft) > 1,
+      after: Math.abs(viewportRef.scrollLeft) + viewportRef.clientWidth < viewportRef.scrollWidth - 1,
       showThumb: local.orientation !== "horizontal" && clientHeight > 0 && scrollHeight > clientHeight,
       thumbHeight: Math.max(0, height),
       thumbTop:
@@ -242,7 +248,9 @@ export function ScrollView(props: ScrollViewProps) {
           ),
         ),
       showHorizontal:
-        local.orientation !== "vertical" && viewportRef.clientWidth > 0 && viewportRef.scrollWidth > viewportRef.clientWidth,
+        local.orientation !== "vertical" &&
+        viewportRef.clientWidth > 0 &&
+        viewportRef.scrollWidth > viewportRef.clientWidth,
       thumbWidth: Math.max(0, width),
       thumbLeft:
         8 + (viewportRef.matches(":dir(rtl)") ? 1 - horizontalProgress : horizontalProgress) * (trackWidth - width),
@@ -295,6 +303,7 @@ export function ScrollView(props: ScrollViewProps) {
       ? e.clientX - thumbRef.getBoundingClientRect().left
       : e.clientY - thumbRef.getBoundingClientRect().top
     const track = horizontal ? viewportRef : (thumbMount() ?? viewportRef)
+    const inset = horizontal ? 0 : (local.thumbInsetTop ?? 0)
 
     thumbRef.setPointerCapture(e.pointerId)
 
@@ -302,9 +311,9 @@ export function ScrollView(props: ScrollViewProps) {
       const { scrollHeight, clientHeight } = viewportRef
       const offset = scrollTopFromThumbPointer({
         pointer: horizontal ? e.clientX : e.clientY,
-        viewportTop: horizontal ? track.getBoundingClientRect().left : track.getBoundingClientRect().top,
+        viewportTop: horizontal ? track.getBoundingClientRect().left : track.getBoundingClientRect().top + inset,
         grabOffset,
-        clientHeight: horizontal ? track.clientWidth : track.clientHeight,
+        clientHeight: horizontal ? track.clientWidth : track.clientHeight - inset,
         scrollClientHeight: horizontal ? viewportRef.clientWidth : clientHeight,
         scrollHeight: horizontal ? viewportRef.scrollWidth : scrollHeight,
         thumbHeight: horizontal ? state.thumbWidth : thumbHeight(),
@@ -342,6 +351,7 @@ export function ScrollView(props: ScrollViewProps) {
       data-dragging={isDragging()}
       style={{
         height: horizontal ? undefined : `${thumbHeight()}px`,
+        top: horizontal ? undefined : `${local.thumbInsetTop ?? 0}px`,
         width: horizontal ? `${state.thumbWidth}px` : undefined,
         transform: horizontal ? `translateX(${state.thumbLeft}px)` : `translateY(${thumbTop()}px)`,
         "z-index": 100, // ensure it displays over content
@@ -403,6 +413,8 @@ export function ScrollView(props: ScrollViewProps) {
       data-orientation={local.orientation}
       data-scroll-above={state.above || undefined}
       data-scroll-below={state.below || undefined}
+      data-scroll-before={state.before || undefined}
+      data-scroll-after={state.after || undefined}
       style={local.style}
       onPointerEnter={() => {
         if (hoverRoot()) setState("isHovered", true)

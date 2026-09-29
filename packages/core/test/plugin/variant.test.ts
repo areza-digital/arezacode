@@ -19,21 +19,29 @@ const locationLayer = Layer.succeed(
 const it = testEffect(AppNodeBuilder.build(Catalog.node, [[Location.node, locationLayer]]))
 
 describe("VariantPlugin", () => {
-  it.effect("exposes Astra reasoning variants to the runtime catalog", () =>
+  it.effect("exposes GPT-6 routing efforts to the runtime catalog", () =>
     Effect.gen(function* () {
       const service = yield* Catalog.Service
       yield* service.transform((catalog) => {
         catalog.provider.update(ProviderV2.ID.openai, (provider) => {
           provider.api = { type: "aisdk", package: "@ai-sdk/openai" }
         })
-        catalog.model.update(ProviderV2.ID.openai, ModelV2.ID.make("gpt-6-astra"), (model) => {
-          model.api = { id: ModelV2.ID.make("gpt-6-astra"), type: "native", settings: {} }
-        })
+        for (const id of ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"]) {
+          catalog.model.update(ProviderV2.ID.openai, ModelV2.ID.make(id), (model) => {
+            model.api = { id: ModelV2.ID.make(id), type: "native", settings: {} }
+          })
+        }
       })
       yield* VariantPlugin.Plugin.effect(host({ catalog: catalogHost(service) }))
-      expect((yield* service.model.get(ProviderV2.ID.openai, ModelV2.ID.make("gpt-6-astra")))?.variants).toEqual(
-        ["low", "medium", "high"].map((id) => ({ id: ModelV2.VariantID.make(id), headers: {}, body: { reasoningEffort: id } })),
-      )
+      for (const id of ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"]) {
+        expect((yield* service.model.get(ProviderV2.ID.openai, ModelV2.ID.make(id)))?.variants).toEqual(
+          ["low", "medium", "high"].map((id) => ({
+            id: ModelV2.VariantID.make(id),
+            headers: {},
+            body: { reasoningEffort: id },
+          })),
+        )
+      }
     }),
   )
 

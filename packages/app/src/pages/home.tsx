@@ -89,36 +89,13 @@ export function HomeSidebar(props: { onCollapse: () => void; debugTools?: { visi
       [],
     )
     const recordsByID = createMemo(() => new Map(records().map((record) => [record.session.id, record])))
-    const drafts = () =>
-      tabs.store.filter(
-        (tab) =>
-          tab.type === "draft" &&
-          (selectedDraft() === tab.draftID || tabs.draftHasContent(tab)) &&
-          tab.server === ServerConnection.key(conn) &&
-          (tab.project || tab.directory) === project().worktree,
-      )
     const chats = () => project().worktree === home.project.chatDirectory(conn)
     return (
-      <Show when={!chats() || records().length || drafts().length}>
+      <Show when={!chats() || records().length}>
         <div class="mt-1 mb-3 flex flex-col gap-0.5">
           <Show when={chats()}>
             <div class="px-2 py-2 text-v2-text-text-muted">{language.t("sidebar.chats")}</div>
           </Show>
-          <For each={drafts()}>
-            {(draft) => (
-              <button
-                type="button"
-                data-component="home-draft-row"
-                class="flex h-8 items-center rounded-md pl-10 pr-2 text-left text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover"
-                classList={{
-                  "bg-v2-background-bg-layer-03": draft.type === "draft" && selectedDraft() === draft.draftID,
-                }}
-                onClick={() => tabs.select(draft)}
-              >
-                <OverflowText fade>{language.t("command.session.new")}</OverflowText>
-              </button>
-            )}
-          </For>
           <Show
             when={!sessions.data.loading()}
             fallback={
@@ -128,13 +105,16 @@ export function HomeSidebar(props: { onCollapse: () => void; debugTools?: { visi
             <For
               each={[...recordsByID().keys()]}
               fallback={
-                <span class="px-10 py-2 text-v2-text-text-faint" classList={{ hidden: drafts().length > 0 }}>
+                <span class="px-10 py-2 text-v2-text-text-faint">
                   {projects.copy.language.t("home.sessions.empty")}
                 </span>
               }
             >
               {(id) => {
-                const record = () => recordsByID().get(id)!
+                const record = createMemo<ReturnType<typeof records>[number]>(
+                  (previous) => recordsByID().get(id) ?? previous,
+                  recordsByID().get(id)!,
+                )
                 return (
                   <div
                     class="group/chat relative flex min-w-0 items-center rounded-md hover:bg-v2-overlay-simple-overlay-hover"

@@ -12,6 +12,7 @@ type WatcherOps = {
   loadFile: (path: string) => void
   node: (path: string) => FileNode | undefined
   isDirLoaded: (path: string) => boolean
+  removeDir?: (path: string) => void
   refreshDir: (path: string) => void
 }
 
@@ -45,6 +46,7 @@ export function invalidateFromWatcher(event: WatcherEvent, ops: WatcherOps) {
     return
   }
   if (kind !== "add" && kind !== "unlink") return
+  if (kind === "unlink" && ops.node(path)?.type === "directory") ops.removeDir?.(path)
 
   const parent = path.split("/").slice(0, -1).join("/")
   if (!ops.isDirLoaded(parent)) return

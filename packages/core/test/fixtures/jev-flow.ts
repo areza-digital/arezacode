@@ -4,7 +4,8 @@ import path from "node:path"
 import { Jev } from "../../src/jev"
 import { Auth } from "../../src/legacy-auth"
 import { LayerNode } from "../../src/effect/layer-node"
-import { Effect } from "effect"
+import { Deferred, Effect, Fiber } from "effect"
+import { FileMutation } from "../../src/file-mutation"
 
 const auth = LayerNode.compile(Auth.node)
 
@@ -235,7 +236,18 @@ const benchmarkRouting: typeof fetch = Object.assign(async (_: Parameters<typeof
 }, { preconnect: fetch.preconnect })
 await Jev.prepare({ ...input, models: economical }, { models: economical, skills: [] }, benchmarkRouting)
 assert.equal((await Jev.delegate(input.sessionID, "economical-child", "Find the two route definitions and return file/line references", "explore", benchmarkRouting))?.model?.modelID, "gpt-6-luna")
-assert.equal((await Jev.delegate(input.sessionID, "uncertain-child", "Review ambiguous authentication behavior", "general", uncertain))?.routing, "uncertain")
+assert.deepEqual(
+  (
+    await Jev.delegate(
+      input.sessionID,
+      "uncertain-child",
+      "Review ambiguous authentication behavior",
+      "general",
+      uncertain,
+    )
+  )?.model,
+  { providerID: "openai", modelID: "gpt-6-sol", variant: "medium" },
+)
 const restricted: typeof fetch = Object.assign(async (_: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
   const body = JSON.parse(String(init?.body))
   assert.deepEqual(Object.keys(body.questions.model.criteria), ["model0"])
@@ -258,10 +270,18 @@ for (const providerID of ["openai", "openrouter"]) {
     await Jev.prepare({ ...input, sessionID: parentID, models }, { models, skills: [] }, choose)
     const childID = `${parentID}-child`
     const child = await Jev.delegate(parentID, childID, "Diagnose the requested issue", "general", choose)
-    assert.deepEqual(child?.model, { providerID, modelID: providerID === "openai" ? "gpt-6-astra" : "openai/gpt-6-astra", variant: "high" })
+    assert.deepEqual(child?.model, {
+      providerID,
+      modelID: providerID === "openai" ? "gpt-6-sol" : "openai/gpt-6-sol",
+      variant: "medium",
+    })
     assert.equal(child?.routing, "selected")
-    assert.ok((await Jev.usage(childID)).some((entry) => entry.decision?.selected?.variant === "high"))
-    const restricted = models.filter((model) => !("variant" in model) || model.variant !== "high")
+    assert.ok(
+      (await Jev.usage(childID)).some(
+        (entry) => entry.decision?.selected?.id.endsWith("gpt-6-sol") && entry.decision.selected.variant === "medium",
+      ),
+    )
+    const restricted = models.filter((model) => !("variant" in model) || model.variant === "low")
     await Jev.prepare({ ...input, sessionID: `${parentID}-restricted`, models: restricted }, { models: restricted, skills: [] }, choose)
     assert.equal((await Jev.delegate(`${parentID}-restricted`, `${childID}-restricted`, "Diagnose the requested issue", "general", choose))?.routing, "uncertain")
   }
@@ -271,7 +291,10 @@ for (const [text, workload, confidence, expected] of [
   ["Change padding to exactly 16px", "bounded", 0.95, economical[1]],
   ["Implement pagination", "implementation", 0.95, economical[2]],
   ["The Luna attempt still fails; diagnose the cross-file bug", "escalate", 0.95, astra[3]],
-  ["Investigate unclear behavior", "bounded", 0.4, astra[3]],
+  ["Investigate unclear behavior", "bounded", 0.4, economical[2]],
+  ["Make this interface look better", "design", 0.3, astra[2]],
+  ["Implement pagination", "implementation", 0.74, economical[2]],
+  ["Diagnose an authentication bypass", "escalate", 0.4, astra[3]],
 ] as const) {
   const choose: typeof fetch = Object.assign(async () => Response.json({ answers: {
     workload: { type: "choice", choice: workload, confidence },
@@ -302,11 +325,109 @@ await assert.rejects(Jev.guardChange("scope", "/src/components/card.tsx", "<p>Re
 Jev.remember("scope", "Add the requested dashboard page")
 const allowChange: typeof fetch = Object.assign(async () => Response.json({ answers: { change: { type: "choice", choice: "allow", confidence: 0.99 } } }), { preconnect: fetch.preconnect })
 await Jev.guardChange("scope", "/src/pages/requested.tsx", "", "export const Dashboard = () => <main />", allowChange)
-const staleChange: typeof fetch = Object.assign(async () => {
-  Jev.remember("scope", "Stop adding pages; fix the existing card")
-  return allowChange("https://example.invalid")
-}, { preconnect: fetch.preconnect })
-await assert.rejects(Jev.guardChange("scope", "/src/pages/stale.tsx", "", "export const Dashboard = () => <main />", staleChange), /active request changed/)
+const staleChange: typeof fetch = Object.assign(
+  async () => {
+    Jev.remember("scope", "Stop adding pages; fix the existing card")
+    return allowChange("https://example.invalid")
+  },
+  { preconnect: fetch.preconnect },
+)
+await assert.rejects(
+  Jev.guardChange("scope", "/src/pages/stale.tsx", "", "export const Dashboard = () => <main />", staleChange),
+  /active request changed/,
+)
+const approvedTarget = "/src/pages/approved.tsx"
+const approvedContent = "export const Approved = () => <main />"
+Jev.remember("approval", "Add this page")
+let approvals = 0
+await Jev.guardChange("approval", approvedTarget, "", approvedContent, rejectChange, async (review) => {
+  approvals++
+  assert.equal(review.uiScopeGuard, true)
+  assert.equal(review.filepath, approvedTarget)
+  assert.match(review.diff, /\+export const Approved/)
+})
+await Jev.guardChange("approval", approvedTarget, "", approvedContent, rejectChange, async () => {
+  approvals++
+})
+assert.equal(approvals, 1)
+await Jev.verifyChange("approval", approvedTarget, "", approvedContent)
+await assert.rejects(
+  Jev.guardChange("approval", approvedTarget, "", approvedContent + "\n", rejectChange),
+  /UI scope guard/,
+)
+await assert.rejects(
+  Jev.guardChange("approval", "/src/pages/denied.tsx", "", approvedContent, rejectChange, async () => {
+    throw new Error("User rejected")
+  }),
+  /User rejected/,
+)
+await assert.rejects(
+  Jev.guardChange("approval", "/src/pages/denied.tsx", "", approvedContent, rejectChange),
+  /UI scope guard/,
+)
+await assert.rejects(
+  Jev.guardChange("approval", "/src/pages/stale.tsx", "", approvedContent, rejectChange, async () => {
+    Jev.remember("approval", "Stop adding pages")
+  }),
+  /active request changed/,
+)
+await assert.rejects(Jev.guardChange("approval", approvedTarget, "", approvedContent, rejectChange), /UI scope guard/)
+Jev.remember("move", "Move the existing page")
+await Jev.guardChange("move", "/src/pages/moved.tsx", approvedContent, approvedContent, rejectChange)
+await Jev.verifyChange("move", "/src/pages/moved.tsx", "", approvedContent)
+const unavailableChange: typeof fetch = Object.assign(async () => Response.json({}, { status: 503 }), {
+  preconnect: fetch.preconnect,
+})
+await Jev.guardChange("move", "/src/pages/offline.tsx", "", approvedContent, unavailableChange, async () => {
+  approvals++
+})
+assert.equal(approvals, 2)
+const mutations = LayerNode.compile(FileMutation.node)
+for (const method of ["write", "writeTextPreservingBom", "create", "writeIfUnchanged"] as const) {
+  const target = { canonical: path.join(process.env.XDG_CONFIG_HOME!, method + ".tsx"), resource: method + ".tsx" }
+  const original = method === "create" ? "" : "export const Original = () => <p>Original</p>"
+  if (original) await writeFile(target.canonical, original)
+  await assert.rejects(
+    Jev.guardChange("move", target.canonical, original, approvedContent, rejectChange),
+    /UI scope guard/,
+  )
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const files = yield* FileMutation.Service
+      const waiting = yield* Deferred.make<void>()
+      const pending = yield* files[method]({
+        target,
+        content: approvedContent,
+        expected: new TextEncoder().encode(original),
+        sessionID: "move",
+        approveUI: () => Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Effect.never)),
+      }).pipe(Effect.forkScoped)
+      yield* Deferred.await(waiting)
+      yield* Fiber.interrupt(pending)
+      assert.equal(yield* Effect.promise(() => readFile(target.canonical, "utf8").catch(() => "")), original)
+    }).pipe(Effect.scoped, Effect.provide(mutations)),
+  )
+  await assert.rejects(
+    Jev.guardChange("move", target.canonical, original, approvedContent, rejectChange),
+    /UI scope guard/,
+  )
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const files = yield* FileMutation.Service
+      const result = yield* Effect.exit<FileMutation.WriteResult, unknown, never>(
+        files[method]({
+          target,
+          content: approvedContent,
+          expected: new TextEncoder().encode(original),
+          sessionID: "move",
+          approveUI: () => Effect.promise(() => writeFile(target.canonical, "User edited while waiting")),
+        }),
+      )
+      assert.equal(result._tag, "Failure")
+      assert.equal(yield* Effect.promise(() => readFile(target.canonical, "utf8")), "User edited while waiting")
+    }).pipe(Effect.provide(mutations)),
+  )
+}
 const verificationEvidence = { requests: ["Fix the card and install the rebuilt app"], files: ["src/card.tsx"], tools: [{ id: "screen", tool: "browser", input: "screenshot", output: "installed app", visual: true, ok: true }], response: "Checked card layout" }
 const verificationReview: typeof fetch = Object.assign(async (_: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
   const body = JSON.parse(String(init?.body))

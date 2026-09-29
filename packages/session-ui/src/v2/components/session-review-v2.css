@@ -82,21 +82,76 @@
 [data-component="session-review-v2-sidebar-root"] [data-slot="session-review-v2-sidebar-header"] {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding-block: 12px;
   padding-inline: 8px 16px;
   flex-shrink: 0;
 }
 
+[data-component="session-review-v2-sidebar-root"]
+  [data-slot="session-review-v2-sidebar-header"]
+  > [data-component="diff-changes"] {
+  flex-shrink: 0;
+}
+
 [data-component="session-review-v2-sidebar-root"] [data-slot="session-review-v2-sidebar-title"] {
+  position: relative;
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 6px;
   min-width: 0;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-strong, var(--v2-text-text-base));
+  timeline-scope: --review-selectors-scroll;
+}
+
+[data-slot="session-review-v2-sidebar-title"] > div {
+  flex: 1;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-timeline: --review-selectors-scroll x;
+}
+
+[data-slot="session-review-v2-sidebar-title"] > div > * {
+  flex-shrink: 0;
+}
+
+[data-slot="session-review-v2-sidebar-title"]::before,
+[data-slot="session-review-v2-sidebar-title"]::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  z-index: 1;
+  width: 16px;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+[data-slot="session-review-v2-sidebar-title"]::before {
+  left: 0;
+  background: linear-gradient(to right, var(--v2-background-bg-base), transparent);
+}
+
+[data-slot="session-review-v2-sidebar-title"]::after {
+  right: 0;
+  background: linear-gradient(to left, var(--v2-background-bg-base), transparent);
+}
+
+@supports (animation-timeline: --review-selectors-scroll) and (timeline-scope: --review-selectors-scroll) {
+  [data-slot="session-review-v2-sidebar-title"]::before {
+    animation: session-review-v2-sidebar-tree-fade-top linear both;
+    animation-timeline: --review-selectors-scroll;
+    animation-range: 0 0.1px;
+  }
+
+  [data-slot="session-review-v2-sidebar-title"]::after {
+    animation: session-review-v2-sidebar-tree-fade-bottom linear both;
+    animation-timeline: --review-selectors-scroll;
+    animation-range: calc(100% - 1.1px) calc(100% - 1px);
+  }
 }
 
 [data-component="session-review-v2-sidebar-root"]
@@ -108,7 +163,7 @@
   [data-slot="session-review-v2-sidebar-title"]
   [data-component="select-v2-root"] {
   width: fit-content;
-  max-width: 100%;
+  max-width: none;
   min-width: 0;
 }
 

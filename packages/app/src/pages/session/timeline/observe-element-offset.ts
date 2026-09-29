@@ -33,6 +33,14 @@ export function observeElementOffsetReconnectAware<TScrollElement extends Elemen
     const check = (time: number) => {
       frame = undefined
       if (element.isConnected) {
+        if (
+          !instance.options.horizontal &&
+          instance.options.anchorTo === "end" &&
+          element.clientHeight > 0 &&
+          Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) > 1
+        ) {
+          instance.scrollToEnd()
+        }
         const offset = instance.options.horizontal
           ? element.scrollLeft * (instance.options.isRtl ? -1 : 1)
           : element.scrollTop

@@ -97,6 +97,63 @@ test("keeps checking until stale reset-delay callbacks can no longer win", async
   route.remove()
 })
 
+test("restores the latest content after a bottom-following timeline reconnects", async () => {
+  const route = document.createElement("section")
+  const viewport = document.createElement("div")
+  route.append(viewport)
+  document.body.append(route)
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 600 },
+    scrollHeight: { value: 80_000 },
+  })
+  const instance = {
+    scrollElement: viewport,
+    targetWindow: window,
+    scrollOffset: 79_400,
+    options: {
+      horizontal: false,
+      isRtl: false,
+      anchorTo: "end",
+      isScrollingResetDelay: 20,
+      useScrollendEvent: false,
+    },
+    scrollToEnd: () => {
+      viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight
+    },
+  } as unknown as Virtualizer<HTMLDivElement, HTMLDivElement>
+  const calls: number[] = []
+  const cleanup = observeElementOffsetReconnectAware(instance, (offset) => {
+    calls.push(offset)
+    instance.scrollOffset = offset
+  })
+
+  try {
+    route.remove()
+    document.body.append(route)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await frames(1)
+    expect(viewport.scrollTop).toBe(79_400)
+    expect(instance.scrollOffset).toBe(79_400)
+    expect(calls).toEqual([])
+
+    viewport.scrollTop = 0
+    instance.scrollOffset = 0
+    await frames(1)
+    expect(viewport.scrollTop).toBe(79_400)
+    expect(instance.scrollOffset).toBe(79_400)
+    expect(calls).toEqual([79_400])
+
+    instance.options.anchorTo = "start"
+    viewport.scrollTop = 400
+    viewport.dispatchEvent(new Event("scroll"))
+    expect(viewport.scrollTop).toBe(400)
+    expect(instance.scrollOffset).toBe(400)
+  } finally {
+    cleanup?.()
+    route.remove()
+  }
+})
+
 test.each([
   { name: "LTR", isRtl: false, expected: 240 },
   { name: "RTL", isRtl: true, expected: -240 },

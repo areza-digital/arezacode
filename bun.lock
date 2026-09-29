@@ -31,7 +31,7 @@
     },
     "packages/app": {
       "name": "@opencode-ai/app",
-      "version": "1.18.34",
+      "version": "1.18.35",
       "dependencies": {
         "@corvu/drawer": "catalog:",
         "@dnd-kit/abstract": "0.5.0",
@@ -389,7 +389,7 @@
     },
     "packages/desktop": {
       "name": "@opencode-ai/desktop",
-      "version": "1.18.34",
+      "version": "1.18.35",
       "dependencies": {
         "@zip.js/zip.js": "2.7.62",
         "drizzle-orm": "catalog:",

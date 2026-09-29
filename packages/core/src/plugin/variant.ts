@@ -28,7 +28,7 @@ export const Plugin = define({
 })
 
 export function generate(model: ModelV2Info): ModelV2Info["variants"] {
-  if (model.providerID === "openai" && model.id === "gpt-6-astra")
+  if (model.providerID === "openai" && ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"].includes(model.id))
     return ["low", "medium", "high"].map((id) => ({ id, headers: {}, body: { reasoningEffort: id } }))
   if (model.api.type !== "aisdk" || model.api.package !== "@ai-sdk/openai-compatible") return []
   const ids = `${model.id} ${model.api.id}`.toLowerCase()

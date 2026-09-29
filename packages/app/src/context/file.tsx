@@ -222,20 +222,24 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
           },
         )
 
-    const stop = sdk().event.listen((e) => {
-      invalidateFromWatcher(e.details, {
-        normalize: path.normalize,
-        hasFile: (file) => Boolean(store.file[file]),
-        isOpen: (file) => tabs.all().some((tab) => path.pathFromTab(tab) === file),
-        loadFile: (file) => {
-          void load(file, { force: true })
-        },
-        node: tree.node,
-        isDirLoaded: tree.isLoaded,
-        refreshDir: (dir) => {
-          void tree.listDir(dir, { force: true })
-        },
+    createEffect(() => {
+      const stop = sdk().event.listen((e) => {
+        invalidateFromWatcher(e.details, {
+          normalize: path.normalize,
+          hasFile: (file) => Boolean(store.file[file]),
+          isOpen: (file) => tabs.all().some((tab) => path.pathFromTab(tab) === file),
+          loadFile: (file) => {
+            void load(file, { force: true })
+          },
+          node: tree.node,
+          isDirLoaded: (dir) => Boolean(tree.dirState(dir)?.loaded || tree.dirState(dir)?.loading),
+          removeDir: tree.removeDir,
+          refreshDir: (dir) => {
+            void tree.listDir(dir, { force: true })
+          },
+        })
       })
+      onCleanup(stop)
     })
 
     const get = (input: string) => {
@@ -263,7 +267,6 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       withPath(input, (file) => view().setSelectedLines(file, range))
 
     onCleanup(() => {
-      stop()
       viewCache.clear()
     })
 

@@ -24,7 +24,7 @@ import { usePrompt } from "@/context/prompt"
 import { useSettings } from "@/context/settings"
 import { getSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
-import { createOpenSessionFileTab, createSessionTabs } from "@/pages/session/helpers"
+import { createOpenSessionFileTab, createSessionTabs, parseFlowDocument } from "@/pages/session/helpers"
 
 type SessionFileViewProps = {
   tab: string
@@ -225,8 +225,14 @@ export function SessionFileView(props: SessionFileViewProps) {
     const value = path()
     return value ? file.get(value) : undefined
   })
+  const flow = createMemo(() => {
+    if (!/\.flow\.md$/i.test(path() ?? "")) return
+    return parseFlowDocument(state()?.content?.content ?? "")
+  })
   const [preview, setPreview] = createStore({ mode: "preview" })
+  const [stage, setStage] = createStore({ value: "everyone" })
   createEffect(on(path, () => setPreview("mode", "preview")))
+  createEffect(on(path, () => setStage("value", "everyone")))
   const openFile = createOpenSessionFileTab({
     normalizeTab: file.tab,
     openTab: (tab) => panels.tabs().open(tab),
@@ -245,18 +251,46 @@ export function SessionFileView(props: SessionFileViewProps) {
     <Show when={/\.(?:md|markdown|mdown|mkd)$/i.test(path() ?? "")} fallback={code()}>
       <Tabs value={preview.mode} onChange={(mode) => setPreview("mode", mode)} class="flex h-full min-h-0 flex-col">
         <Tabs.List class="shrink-0">
-          <Tabs.Trigger value="preview">{language.t("session.file.preview")}</Tabs.Trigger>
-          <Tabs.Trigger value="code">{language.t("session.file.code")}</Tabs.Trigger>
+          <Tabs.Trigger value="preview">
+            {flow() ? language.t("session.flow.explanation") : language.t("session.file.preview")}
+          </Tabs.Trigger>
+          <Tabs.Trigger value="code">
+            {flow() ? language.t("session.flow.wireframe") : language.t("session.file.code")}
+          </Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="preview" class="min-h-0 flex-1">
           <ScrollView class="h-full">
             <Switch>
               <Match when={state()?.loaded}>
-                <Markdown
-                  text={state()?.content?.content ?? ""}
-                  class="px-6 py-4 select-text"
-                  on:click={(event) => openMarkdownFileLink(event, openFile, path())}
-                />
+                <Show
+                  when={flow()}
+                  fallback={
+                    <Markdown
+                      text={state()?.content?.content ?? ""}
+                      class="px-6 py-4 select-text"
+                      on:click={(event) => openMarkdownFileLink(event, openFile, path())}
+                    />
+                  }
+                >
+                  {(document) => (
+                    <Tabs value={stage.value} onChange={(value) => setStage("value", value)}>
+                      <Tabs.List>
+                        <Tabs.Trigger value="everyone">{language.t("session.flow.everyone")}</Tabs.Trigger>
+                        <Tabs.Trigger value="technical">{language.t("session.flow.technical")}</Tabs.Trigger>
+                      </Tabs.List>
+                      <Tabs.Content value="everyone">
+                        <Markdown text={document().everyone} class="px-6 py-4 select-text" />
+                      </Tabs.Content>
+                      <Tabs.Content value="technical">
+                        <Markdown
+                          text={document().technical}
+                          class="px-6 py-4 select-text"
+                          on:click={(event) => openMarkdownFileLink(event, openFile, path())}
+                        />
+                      </Tabs.Content>
+                    </Tabs>
+                  )}
+                </Show>
               </Match>
               <Match when={state()?.loading}>
                 <div class="px-6 py-4 text-text-weak">{language.t("common.loading")}...</div>
@@ -266,7 +300,13 @@ export function SessionFileView(props: SessionFileViewProps) {
           </ScrollView>
         </Tabs.Content>
         <Tabs.Content value="code" class="min-h-0 flex-1">
-          {code()}
+          <Show when={flow()} fallback={code()}>
+            {(document) => (
+              <ScrollView class="h-full">
+                <Markdown text={document().wireframe} class="px-6 py-4 select-text" />
+              </ScrollView>
+            )}
+          </Show>
         </Tabs.Content>
       </Tabs>
     </Show>

@@ -18,6 +18,7 @@ export type DiffStyle = "unified" | "split"
 type ReviewDiff = FileDiffInfo | SnapshotFileDiff | VcsFileDiff
 
 export interface SessionReviewTabProps {
+  directory?: string
   title?: JSX.Element
   empty?: JSX.Element
   diffs: () => ReviewDiff[]
@@ -55,7 +56,7 @@ export function SessionReviewTab(props: SessionReviewTabProps) {
 
   const readFile = async (path: string) => {
     return sdk()
-      .client.file.read({ path })
+      .client.file.read({ path, directory: props.directory })
       .then((x) => x.data)
       .catch((error) => {
         console.debug("[session-review] failed to read file", { path, error })

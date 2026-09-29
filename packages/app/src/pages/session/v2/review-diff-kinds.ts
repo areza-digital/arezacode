@@ -2,11 +2,38 @@ import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import type { Kind } from "@/components/file-tree-v2"
 import { normalizeFileTreeV2Path } from "@/components/file-tree-v2-model"
+import { pathKey } from "@/utils/path-key"
 
 export type RenderDiff = FileDiffInfo | (SnapshotFileDiff & { file: string }) | VcsFileDiff
 
+export function reviewDirectories(
+  projects: { worktree: string; folders?: string[]; sandboxes?: string[] }[],
+  directory: string,
+  assignment?: string,
+) {
+  const project = projects.find((item) =>
+    assignment
+      ? pathKey(item.worktree) === pathKey(assignment)
+      : [item.worktree, ...(item.folders ?? []), ...(item.sandboxes ?? [])].some(
+          (folder) => pathKey(folder) === pathKey(directory),
+        ),
+  )
+  const folders = project?.folders?.length ? project.folders : [project?.worktree ?? directory]
+  const worktree = project?.sandboxes?.some((folder) => pathKey(folder) === pathKey(directory)) ? [directory] : []
+  return [...new Map([...worktree, ...folders].map((folder) => [pathKey(folder), folder])).values()]
+}
+
 export function normalizePath(p: string) {
   return normalizeFileTreeV2Path(p)
+}
+
+export function reviewFilePath(root: string, file: string, directory: string) {
+  const source = pathKey(directory).split("/").filter(Boolean)
+  const target = pathKey(root).split("/").filter(Boolean)
+  if (/^[A-Za-z]:$/.test(source[0] ?? "") && source[0] !== target[0]) return `${pathKey(root)}/${file}`
+  const common = source.findIndex((part, index) => part !== target[index])
+  const prefix = common < 0 ? source.length : common
+  return [...source.slice(prefix).map(() => ".."), ...target.slice(prefix), file].join("/")
 }
 
 export function filterRenderableDiff(value: FileDiffInfo | SnapshotFileDiff | VcsFileDiff): value is RenderDiff {

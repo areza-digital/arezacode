@@ -11,6 +11,26 @@ export const isSessionBrowserTab = (tab: string) => tab === "browser" || tab.sta
 export const isSessionUtilityTab = (tab: string) =>
   isSessionBrowserTab(tab) || SESSION_UTILITY_TABS.some((item) => item === tab)
 
+export function parseFlowDocument(text: string) {
+  const sections = text.match(
+    /(?:^|\n)## For everyone\s*\n([\s\S]*?)\n## Technical details\s*\n([\s\S]*?)\n## Wireframe\s*\n([\s\S]*)/,
+  )
+  if (!sections) return
+  return { everyone: sections[1].trim(), technical: sections[2].trim(), wireframe: sections[3].trim() }
+}
+
+export function flowFileFromTool(part: {
+  tool?: string
+  state?: { status?: string; input?: Record<string, unknown> }
+}) {
+  if (part.state?.status !== "completed") return
+  const input = part.state.input
+  if (part.tool === "apply_patch" && typeof input?.patchText === "string")
+    return input.patchText.match(/^\*\*\* (?:Add File|Update File): (.+\.flow\.md)$/m)?.[1]
+  if (part.tool !== "write" && part.tool !== "edit") return
+  return typeof input?.path === "string" ? input.path : typeof input?.filePath === "string" ? input.filePath : undefined
+}
+
 const emptyTabs: string[] = []
 
 type Tabs = {

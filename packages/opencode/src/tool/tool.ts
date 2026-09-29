@@ -7,6 +7,7 @@ import type { Permission } from "../permission"
 import type { SessionID, MessageID } from "../session/schema"
 import * as Truncate from "./truncate"
 import { Agent } from "@/agent/agent"
+import { Jev } from "@opencode-ai/core/jev"
 
 interface Metadata {
   [key: string]: any
@@ -43,6 +44,17 @@ export type Context<M extends Metadata = Metadata> = {
   messages: SessionV1.WithParts[]
   metadata(input: { title?: string; metadata?: M }): Effect.Effect<void>
   ask(input: Omit<PermissionV1.Request, "id" | "sessionID" | "tool">): Effect.Effect<void>
+}
+
+export function guardChange(ctx: Context, target: string, before: string, after: string) {
+  return Jev.approveChange(ctx.sessionID, target, before, after, (metadata) =>
+    ctx.ask({
+      permission: "edit",
+      patterns: [target],
+      always: [],
+      metadata,
+    }),
+  )
 }
 
 export interface ExecuteResult<M extends Metadata = Metadata> {

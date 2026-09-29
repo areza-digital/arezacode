@@ -37,14 +37,16 @@ export function SessionPermissionDock(props: {
             <Button variant="ghost" size="normal" onClick={() => props.onDecide("reject")} disabled={props.responding}>
               {language.t("ui.permission.deny")}
             </Button>
-            <Button
-              variant="secondary"
-              size="normal"
-              onClick={() => props.onDecide("always")}
-              disabled={props.responding}
-            >
-              {language.t("ui.permission.allowAlways")}
-            </Button>
+            <Show when={props.request.metadata.uiScopeGuard !== true}>
+              <Button
+                variant="secondary"
+                size="normal"
+                onClick={() => props.onDecide("always")}
+                disabled={props.responding}
+              >
+                {language.t("ui.permission.allowAlways")}
+              </Button>
+            </Show>
             <Button variant="primary" size="normal" onClick={() => props.onDecide("once")} disabled={props.responding}>
               {language.t("ui.permission.allowOnce")}
             </Button>
@@ -52,7 +54,22 @@ export function SessionPermissionDock(props: {
         </>
       }
     >
-      <Show when={toolDescription()}>
+      <Show when={props.request.metadata.uiScopeGuard === true}>
+        <div data-slot="permission-row">
+          <span data-slot="permission-spacer" aria-hidden="true" />
+          <div class="min-w-0">
+            <Show when={typeof props.request.metadata.reason === "string"}>
+              <div data-slot="permission-hint">{String(props.request.metadata.reason)}</div>
+            </Show>
+            <Show when={typeof props.request.metadata.diff === "string"}>
+              <pre class="mt-2 max-h-64 overflow-auto text-12-regular text-text-base">
+                {String(props.request.metadata.diff)}
+              </pre>
+            </Show>
+          </div>
+        </div>
+      </Show>
+      <Show when={toolDescription() && props.request.metadata.uiScopeGuard !== true}>
         <div data-slot="permission-row">
           <span data-slot="permission-spacer" aria-hidden="true" />
           <div data-slot="permission-hint">{toolDescription()}</div>

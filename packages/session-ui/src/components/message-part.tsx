@@ -1915,15 +1915,9 @@ ToolRegistry.register({
         trigger={{ title: i18n.t("ui.tool.list"), subtitle: getDirectory(props.input.path || "/") }}
       >
         <Show when={props.output}>
-          <div
-            data-component="tool-output"
-            data-scrollable
-            tabIndex={0}
-            role="region"
-            aria-label={i18n.t("ui.scrollView.ariaLabel")}
-          >
+          <ScrollView data-component="tool-output" class="scroll-view--fade">
             <Markdown text={props.output!} />
-          </div>
+          </ScrollView>
         </Show>
       </BasicTool>
     )
@@ -1945,15 +1939,9 @@ ToolRegistry.register({
         }}
       >
         <Show when={props.output}>
-          <div
-            data-component="tool-output"
-            data-scrollable
-            tabIndex={0}
-            role="region"
-            aria-label={i18n.t("ui.scrollView.ariaLabel")}
-          >
+          <ScrollView data-component="tool-output" class="scroll-view--fade">
             <Markdown text={props.output!} />
-          </div>
+          </ScrollView>
         </Show>
       </BasicTool>
     )
@@ -1978,15 +1966,9 @@ ToolRegistry.register({
         }}
       >
         <Show when={props.output}>
-          <div
-            data-component="tool-output"
-            data-scrollable
-            tabIndex={0}
-            role="region"
-            aria-label={i18n.t("ui.scrollView.ariaLabel")}
-          >
+          <ScrollView data-component="tool-output" class="scroll-view--fade">
             <Markdown text={props.output!} />
-          </div>
+          </ScrollView>
         </Show>
       </BasicTool>
     )
@@ -2226,17 +2208,11 @@ ToolRegistry.register({
               />
             </TooltipV2>
           </div>
-          <div
-            data-slot="bash-scroll"
-            data-scrollable
-            tabIndex={0}
-            role="region"
-            aria-label={i18n.t("ui.scrollView.ariaLabel")}
-          >
+          <ScrollView data-slot="bash-scroll" class="scroll-view--fade" orientation="vertical">
             <pre data-slot="bash-pre">
               <code>{text()}</code>
             </pre>
-          </div>
+          </ScrollView>
         </div>
       </BasicTool>
     )

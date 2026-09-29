@@ -73,7 +73,7 @@ import {
   createSessionComposerRegionController,
   SessionComposerRegion,
 } from "@/pages/session/composer"
-import { createOpenReviewFile, createSessionTabs, createSizing, shouldShowFileTree } from "@/pages/session/helpers"
+import { createOpenReviewFile, createSessionTabs, createSizing, flowFileFromTool, shouldShowFileTree } from "@/pages/session/helpers"
 import { MessageTimeline } from "@/pages/session/timeline/message-timeline"
 import { createTimelineModel } from "@/pages/session/timeline/model"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
@@ -92,7 +92,13 @@ import { SessionReviewEmptyNoGitV2 } from "@opencode-ai/session-ui/v2/session-re
 import { SESSION_REVIEW_V2_SIDEBAR_WIDTH_MIN, SessionReviewV2SidebarToggle } from "@opencode-ai/session-ui/v2/session-review-v2"
 import { ReviewPanelV2 } from "@/pages/session/v2/review-panel-v2"
 import { createReviewPanelV2State } from "@/pages/session/v2/review-panel-v2-state"
-import { reviewDiffDirectory, reviewDiffNeedsLoad, reviewRootDirectory } from "@/pages/session/v2/review-diff-kinds"
+import {
+  reviewDirectories,
+  reviewDiffDirectory,
+  reviewDiffNeedsLoad,
+  reviewFilePath,
+  reviewRootDirectory,
+} from "@/pages/session/v2/review-diff-kinds"
 import { TerminalPanel } from "@/pages/session/terminal-panel"
 import { TerminalPanelV2 } from "@/pages/session/terminal-panel-v2"
 import { useComposerCommands } from "@/pages/session/use-composer-commands"
@@ -367,6 +373,7 @@ function SessionPanelFrame(props: ParentProps<{ newLayout: boolean; raised?: boo
 
 export default function Page() {
   const serverSync = useServerSync()
+  const server = useServer()
   const layout = useLayout()
   const local = useLocal()
   const file = useFile()
@@ -711,15 +718,34 @@ export default function Page() {
     return open
   }, desktopReviewOpen())
 
-  const turnDiffs = createMemo(() => list(lastUserMessage()?.summary?.diffs))
+  const reviewProjects = createMemo(() => server.projects.forServer(ServerConnection.key(serverSDK().server)))
+  const reviewAssignment = () => reviewProjects().assignment(params.id ?? "")?.project
+  const reviewFolders = createMemo(() =>
+    reviewDirectories(reviewProjects().list(), sdk().directory, reviewAssignment()),
+  )
+  const reviewScope = () => `${sessionKey()}\0${reviewAssignment() ?? ""}`
+  const [reviewSelection, setReviewSelection] = createStore({ scope: "", directory: "" })
+  const reviewDirectory = createMemo(() => {
+    const folders = reviewFolders()
+    if (reviewSelection.scope === reviewScope() && folders.includes(reviewSelection.directory))
+      return reviewSelection.directory
+    return folders.includes(sdk().directory) ? sdk().directory : folders[0]!
+  })
+  const reviewSDK = createMemo(() => serverSDK().ensureDirSdkContext(reviewDirectory()))
+  const reviewSync = createMemo(() => serverSync().ensureDirSyncContext(reviewDirectory()))
+  const reviewRoot = () => reviewRootDirectory(reviewSync().data.path.worktree || reviewDirectory())
+  createEffect(on(reviewDirectory, () => view().review.setMode("git"), { defer: true }))
+  const turnDiffs = createMemo(() =>
+    reviewDirectory() === sdk().directory ? list(lastUserMessage()?.summary?.diffs) : [],
+  )
   const nogit = createMemo(() => {
-    const project = sync().project
+    const project = reviewSync().project
     return !!project && project.vcs !== "git"
   })
   const changesOptions = createMemo<ChangeMode[]>(() => {
     const list: ChangeMode[] = []
-    const project = sync().project
-    const vcs = sync().data.vcs
+    const project = reviewSync().project
+    const vcs = reviewSync().data.vcs
     if (project?.vcs === "git") list.push("git")
     if (project?.vcs === "git" && vcs?.branch && vcs?.default_branch && vcs.branch !== vcs.default_branch) {
       list.push("branch")
@@ -740,19 +766,28 @@ export default function Page() {
   })
   const vcsKey = createMemo(
     () =>
-      ["session-vcs", sdk().directory, sync().data.vcs?.branch ?? "", sync().data.vcs?.default_branch ?? ""] as const,
+      [
+        serverSDK().scope,
+        "session-vcs",
+        reviewDirectory(),
+        reviewSync().data.vcs?.branch ?? "",
+        reviewSync().data.vcs?.default_branch ?? "",
+      ] as const,
   )
   const vcsQuery = createQuery(() => {
     const mode = vcsMode()
-    const enabled = (wantsReview() || warmReview()) && sync().project?.vcs === "git"
+    const directory = reviewDirectory()
+    const api = reviewSDK().api
+    const enabled = (wantsReview() || warmReview()) && reviewSync().project?.vcs === "git"
 
     return {
       queryKey: [...vcsKey(), mode] as const,
       enabled,
+      refetchOnWindowFocus: "always",
       queryFn: mode
         ? () =>
-            sdk()
-              .api.vcs.diff({ location: { directory: sdk().directory }, mode: mode === "git" ? "working" : mode })
+            api.vcs
+              .diff({ location: { directory }, mode: mode === "git" ? "working" : mode })
               .then((result) => result.data)
               .catch((error) => {
                 console.debug("[session-review] failed to load vcs diff", { mode, error })
@@ -774,6 +809,24 @@ export default function Page() {
     if (selected && diffs.some((diff) => diff.file === selected)) return selected
     return diffs[0]?.file
   }
+  const reviewPath = (path: string) =>
+    reviewMode() === "turn" ? path : reviewFilePath(reviewRoot(), path, sdk().directory)
+  const reviewComments = createMemo(() => {
+    const paths = new Map(
+      reviewDiffs().flatMap((diff) =>
+        typeof diff.file === "string" ? [[reviewPath(diff.file), diff.file] as const] : [],
+      ),
+    )
+    return comments.all().flatMap((comment) => {
+      const path = paths.get(comment.file)
+      return path ? [{ ...comment, file: path }] : []
+    })
+  })
+  const reviewFocus = () => {
+    const focus = comments.focus()
+    const file = focus && reviewComments().find((comment) => comment.id === focus.id)?.file
+    return focus && file ? { ...focus, file } : undefined
+  }
   const reviewCount = () => reviewDiffs().length
   const hasReview = () => reviewCount() > 0
   const reviewReady = () => {
@@ -783,11 +836,13 @@ export default function Page() {
   const loadReviewDiff = async (file: string, version?: number): Promise<VcsFileDiff | undefined> => {
     const mode = vcsMode()
     if (!mode) return
-    const root = reviewRootDirectory(sync().project?.worktree ?? sdk().directory)
+    const root = reviewRoot()
     const directory = reviewDiffDirectory(root, file)
     const source = reviewDiffs().find((diff) => diff.file === file)
+    const key = vcsKey()
+    const api = reviewSDK().api
     const valid = (diff: VcsFileDiff | undefined) => {
-      if (!diff || !source) return
+      if (!diff || !source || reviewRoot() !== root || vcsMode() !== mode) return
       if (diff.additions !== source.additions || diff.deletions !== source.deletions) return
       if (reviewDiffNeedsLoad(diff)) return
       return diff
@@ -795,12 +850,12 @@ export default function Page() {
     const request = (scope: string, context?: number) =>
       queryClient
         .fetchQuery({
-          queryKey: [serverSDK().scope, ...vcsKey(), mode, "directory", scope, context, version] as const,
+          queryKey: [...key, mode, "directory", scope, context, version] as const,
           staleTime: Number.POSITIVE_INFINITY,
           retry: 2,
           queryFn: () =>
-            sdk()
-              .api.vcs.diff({
+            api.vcs
+              .diff({
                 location: { directory: scope },
                 mode: mode === "git" ? "working" : mode,
                 context,
@@ -889,9 +944,9 @@ export default function Page() {
     scrollToMessage(msgs[targetIndex], "auto")
   }
 
-  function upsert(next: Project) {
+  function upsert(next: Project, directory: string) {
     const list = serverSync().data.project
-    sync().set("project", next.id)
+    serverSync().ensureDirSyncContext(directory).set("project", next.id)
     const idx = list.findIndex((item) => item.id === next.id)
     if (idx >= 0) {
       serverSync().set(
@@ -909,10 +964,10 @@ export default function Page() {
   }
 
   const gitMutation = useMutation(() => ({
-    mutationFn: () => sdk().client.project.initGit(),
-    onSuccess: (x) => {
+    mutationFn: (directory: string) => serverSDK().createClient({ directory }).project.initGit(),
+    onSuccess: (x, directory) => {
       if (!x.data) return
-      upsert(x.data)
+      upsert(x.data, directory)
     },
     onError: (err) => {
       showToast({
@@ -925,7 +980,7 @@ export default function Page() {
 
   function initGit() {
     if (gitMutation.isPending) return
-    gitMutation.mutate()
+    gitMutation.mutate(reviewDirectory())
   }
 
   let inputRef!: HTMLDivElement
@@ -1000,29 +1055,51 @@ export default function Page() {
     ),
   )
 
-  createEffect(
+  createComputed(
     on(
       sessionKey,
       () => {
         setStore(sessionViewState())
         setUi("pendingMessage", undefined)
+        setUi("scrollGesture", 0)
       },
       { defer: true },
     ),
   )
 
-  const stopVcs = sdk().event.listen((evt) => {
-    const details = evt.details as { type: string; properties?: unknown }
-    if (details.type !== "file.watcher.updated" && details.type !== "filesystem.changed") return
-    const props =
-      typeof details.properties === "object" && details.properties
-        ? (details.properties as Record<string, unknown>)
-        : undefined
-    const file = typeof props?.file === "string" ? props.file : undefined
-    if (!file || file.startsWith(".git/")) return
-    refreshVcs()
+  createEffect(() => {
+    const stop = sdk().event.listen((evt) => {
+      const details = evt.details as { type: string; properties?: unknown }
+      if (details.type === "message.part.updated") {
+        const part = (
+          details.properties as {
+            part?: { sessionID?: string; tool?: string; state?: { status?: string; input?: Record<string, unknown> } }
+          }
+        )?.part
+        if (!part || part.sessionID !== params.id) return
+        const path = flowFileFromTool(part)
+        if (!path) return
+        const tab = file.tab(path)
+        const normalized = file.pathFromTab(tab)
+        if (!normalized || !/^flows\/[^/]+\.flow\.md$/i.test(normalized)) return
+        file.load(normalized)
+        tabs().open(tab)
+        openReviewPanel()
+        tabs().setActive(tab)
+        return
+      }
+    })
+    onCleanup(stop)
   })
-  onCleanup(stopVcs)
+  createEffect(() => {
+    const stop = reviewSDK().event.listen((evt) => {
+      const type: string = evt.details.type
+      if (type === "file.watcher.updated" || type === "filesystem.changed" || type === "vcs.branch.updated")
+        refreshVcs()
+    })
+    onCleanup(stop)
+  })
+  onCleanup(() => refreshVcs.clear())
 
   createEffect(
     on(
@@ -1146,8 +1223,8 @@ export default function Page() {
 
   createEffect(() => {
     if (!layout.ready()) return
-    if (sync().status !== "complete") return
-    if (!sync().project) return
+    if (reviewSync().status !== "complete") return
+    if (!reviewSync().project) return
     const list = changesOptions()
     const mode = reviewMode()
     if (list.includes(mode)) return
@@ -1229,21 +1306,44 @@ export default function Page() {
     return language.t("ui.sessionReview.title.lastTurn")
   }
 
+  const reviewFolderSelect = () => (
+    <Show when={reviewFolders().length > 1 || reviewDirectory() !== sdk().directory}>
+      <SelectV2
+        appearance="inline"
+        options={reviewFolders()}
+        current={reviewDirectory()}
+        label={getFilename}
+        aria-label={language.t("project.folders")}
+        title={reviewDirectory()}
+        placement="bottom-start"
+        onSelect={(directory) => {
+          if (!directory) return
+          setReviewSelection({ scope: reviewScope(), directory })
+        }}
+      >
+        {(folder) => <span title={folder}>{folder.split(/[/\\]/).filter(Boolean).slice(-2).join("/") || folder}</span>}
+      </SelectV2>
+    </Show>
+  )
+
   const changesTitle = () => {
     if (!canReview()) {
       return null
     }
 
     return (
-      <Select
-        options={changesOptions()}
-        current={reviewMode()}
-        label={changesLabel}
-        onSelect={(option) => option && view().review.setMode(option)}
-        variant="ghost"
-        size="small"
-        valueClass="text-14-medium"
-      />
+      <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        {reviewFolderSelect()}
+        <Select
+          options={changesOptions()}
+          current={reviewMode()}
+          label={changesLabel}
+          onSelect={(option) => option && view().review.setMode(option)}
+          variant="ghost"
+          size="small"
+          valueClass="text-14-medium"
+        />
+      </div>
     )
   }
 
@@ -1253,15 +1353,18 @@ export default function Page() {
     }
 
     return (
-      <SelectV2
-        appearance="inline"
-        options={changesOptions()}
-        current={reviewMode()}
-        label={changesLabel}
-        placement="bottom-start"
-        gutter={6}
-        onSelect={(option) => option && view().review.setMode(option)}
-      />
+      <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        {reviewFolderSelect()}
+        <SelectV2
+          appearance="inline"
+          options={changesOptions()}
+          current={reviewMode()}
+          label={changesLabel}
+          placement="bottom-start"
+          gutter={6}
+          onSelect={(option) => option && view().review.setMode(option)}
+        />
+      </div>
     )
   }
 
@@ -1330,6 +1433,7 @@ export default function Page() {
   }) => (
     <Show when={!store.deferRender}>
       <SessionReviewTab
+        directory={reviewMode() === "turn" ? sdk().directory : reviewRoot()}
         title={changesTitle()}
         empty={reviewEmpty(input)}
         diffs={reviewDiffs}
@@ -1338,17 +1442,19 @@ export default function Page() {
         onDiffStyleChange={input.onDiffStyleChange}
         onScrollRef={(el) => setTree("reviewScroll", el)}
         focusedFile={activeReviewFile()}
-        onLineComment={(comment) => addCommentToContext({ ...comment, origin: "review" })}
-        onLineCommentUpdate={updateCommentInContext}
-        onLineCommentDelete={removeCommentFromContext}
+        onLineComment={(comment) =>
+          addCommentToContext({ ...comment, file: reviewPath(comment.file), origin: "review" })
+        }
+        onLineCommentUpdate={(comment) => updateCommentInContext({ ...comment, file: reviewPath(comment.file) })}
+        onLineCommentDelete={(comment) => removeCommentFromContext({ ...comment, file: reviewPath(comment.file) })}
         lineCommentActions={reviewCommentActions()}
         commentMentions={{
           items: file.searchFilesAndDirectories,
         }}
-        comments={comments.all()}
-        focusedComment={comments.focus()}
-        onFocusedCommentChange={comments.setFocus}
-        onViewFile={openReviewFile}
+        comments={reviewComments()}
+        focusedComment={reviewFocus()}
+        onFocusedCommentChange={(focus) => comments.setFocus(focus ? { ...focus, file: reviewPath(focus.file) } : null)}
+        onViewFile={(path) => openReviewFile(reviewPath(path))}
         classes={input.classes}
       />
     </Show>
@@ -1360,6 +1466,9 @@ export default function Page() {
   // the side panel's Show children and remounted the whole review panel on unrelated
   // updates such as session switches.
   const reviewPanelV2Props = () => ({
+    get directory() {
+      return reviewMode() === "turn" ? sdk().directory : reviewRoot()
+    },
     get title() {
       return changesTitleV2()
     },
@@ -1381,27 +1490,30 @@ export default function Page() {
     },
     onDiffStyleChange: layout.review.setDiffStyle,
     state: reviewV2State,
-    onLineComment: (comment: SessionReviewLineComment) => addCommentToContext({ ...comment, origin: "review" }),
-    onLineCommentUpdate: updateCommentInContext,
-    onLineCommentDelete: removeCommentFromContext,
+    onLineComment: (comment: SessionReviewLineComment) =>
+      addCommentToContext({ ...comment, file: reviewPath(comment.file), origin: "review" }),
+    onLineCommentUpdate: (comment: Parameters<typeof updateCommentInContext>[0]) =>
+      updateCommentInContext({ ...comment, file: reviewPath(comment.file) }),
+    onLineCommentDelete: (comment: Parameters<typeof removeCommentFromContext>[0]) =>
+      removeCommentFromContext({ ...comment, file: reviewPath(comment.file) }),
     get lineCommentActions() {
       return reviewCommentActions()
     },
     get comments() {
-      return comments.all()
+      return reviewComments()
     },
     get focusedComment() {
-      return comments.focus()
+      return reviewFocus()
     },
     onFocusedCommentChange: (focus: { file: string; id: string } | null) => {
       // The preview clears the focus once it has opened the comment; persist the
       // focused file as the active selection so the preview stays on it. Skip
       // files outside the current diff set (their focus is cleared unhandled).
       if (!focus) {
-        const current = comments.focus()
+        const current = reviewFocus()
         if (current && reviewDiffs().some((diff) => diff.file === current.file)) focusReviewDiff(current.file)
       }
-      comments.setFocus(focus)
+      comments.setFocus(focus ? { ...focus, file: reviewPath(focus.file) } : null)
     },
   })
 
@@ -1562,12 +1674,7 @@ export default function Page() {
     working: () => true,
     overflowAnchor: "none",
   })
-  createComputed(
-    on(
-      sessionKey,
-      () => autoScroll.restore(view().scroll("timeline")?.bottom === false),
-    ),
-  )
+  createComputed(on(sessionKey, () => autoScroll.restore(false)))
 
   let scrollStateFrame: number | undefined
   let scrollStateTarget: HTMLDivElement | undefined

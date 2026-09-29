@@ -18,6 +18,8 @@ Valid types are `feat`, `fix`, `docs`, `chore`, `refactor`, and `test`. Scopes a
 
 Examples: `fix(tui): simplify thinking toggle styling`, `docs: update contributing guide`, `chore(sdk): regenerate types`.
 
+Before every commit and pull request, load and follow `.opencode/skills/change-story/SKILL.md`. Include its numbered, plain-language file walkthrough in the commit body or pull request description and in the final response. Base a commit walkthrough on the staged diff and a pull request walkthrough on the full diff against the target branch; exclude unrelated working-tree changes.
+
 ## Style Guide
 
 ### UI Conventions

@@ -164,6 +164,17 @@ const layer = Layer.effectDiscard(
                         const result = yield* files.create({
                           target: change.target,
                           sessionID: context.sessionID,
+                          approveUI: (metadata) =>
+                            permission
+                              .assert({
+                                action: "edit",
+                                resources: [change.target.resource],
+                                sessionID: context.sessionID,
+                                agent: context.agent,
+                                source,
+                                metadata,
+                              })
+                              .pipe(Effect.orDie),
                           content:
                             change.contents.endsWith("\n") || change.contents === ""
                               ? change.contents
@@ -180,11 +191,30 @@ const layer = Layer.effectDiscard(
                       const result = yield* files.writeIfUnchanged({
                         target: change.target,
                         sessionID: context.sessionID,
+                        approveUI: (metadata) =>
+                          permission
+                            .assert({
+                              action: "edit",
+                              resources: [change.target.resource],
+                              sessionID: context.sessionID,
+                              agent: context.agent,
+                              source,
+                              metadata,
+                            })
+                            .pipe(Effect.orDie),
                         expected: change.source,
                         content: change.content,
                       })
                       applied.push({ type: change.type, resource: result.resource, target: result.target })
-                    }).pipe(Effect.mapError((error) => error instanceof FileMutation.ReuseError ? new ToolFailure({ message: `${error.message}${applied.length ? ` Already applied: ${applied.map((item) => item.resource).join(", ")}` : ""}` }) : fail(change.path))),
+                    }).pipe(
+                      Effect.mapError((error) =>
+                        error instanceof FileMutation.ReuseError
+                          ? new ToolFailure({
+                              message: `${error.message}${applied.length ? ` Already applied: ${applied.map((item) => item.resource).join(", ")}` : ""}`,
+                            })
+                          : fail(change.path),
+                      ),
+                    ),
                   { discard: true },
                 )
                 return { applied, files: patchFiles }

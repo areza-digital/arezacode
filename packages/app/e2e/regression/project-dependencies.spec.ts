@@ -198,7 +198,7 @@ test("keeps long source folder paths inside the create project dialog", async ({
   await page.getByRole("button", { name: "Create project", exact: true }).click()
   const dialog = page.getByRole("dialog", { name: "Create project" })
   await dialog.getByRole("button", { name: "Add a folder" }).click()
-  await expect(dialog.getByText(directory, { exact: true })).toBeVisible()
+  await expect(dialog.getByTitle(directory, { exact: true })).toHaveText("another-long-folder/workspace")
   await dialog.getByPlaceholder("Project name").fill("Long path project")
   await expect(dialog.getByRole("button", { name: "Create project", exact: true })).toBeEnabled()
   for (const width of [1440, 390]) {

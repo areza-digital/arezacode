@@ -6,6 +6,7 @@ import { dirname } from "path"
 import { KeyedMutex } from "./effect/keyed-mutex"
 import { FSUtil } from "./fs-util"
 import { AutomaticChecks } from "./automatic-checks"
+import { Jev } from "./jev"
 
 export interface Target {
   readonly canonical: string
@@ -13,12 +14,14 @@ export interface Target {
 }
 
 export interface WriteInput {
+  readonly approveUI?: Jev.ChangeApproval
   readonly target: Target
   readonly content: string | Uint8Array
   readonly sessionID?: string
 }
 
 export interface TextWriteInput {
+  readonly approveUI?: Jev.ChangeApproval
   readonly target: Target
   readonly content: string
   readonly sessionID?: string
@@ -29,6 +32,7 @@ export interface ConditionalWriteInput extends WriteInput {
 }
 
 export interface ConditionalMutationInput {
+  readonly approveUI?: Jev.ChangeApproval
   readonly target: Target
   readonly expected: Uint8Array | undefined
   readonly content?: string | Uint8Array
@@ -72,9 +76,11 @@ export interface RemoveResult {
 export interface Interface {
   /** Create without replacing an existing target. */
   readonly create: (input: WriteInput) => Effect.Effect<WriteResult, TargetExistsError | ReuseError | FSUtil.Error>
-  readonly write: (input: WriteInput) => Effect.Effect<WriteResult, ReuseError | FSUtil.Error>
+  readonly write: (input: WriteInput) => Effect.Effect<WriteResult, StaleContentError | ReuseError | FSUtil.Error>
   /** Write text while retaining an existing UTF-8 BOM and emitting at most one BOM. */
-  readonly writeTextPreservingBom: (input: TextWriteInput) => Effect.Effect<WriteResult, ReuseError | FSUtil.Error>
+  readonly writeTextPreservingBom: (
+    input: TextWriteInput,
+  ) => Effect.Effect<WriteResult, StaleContentError | ReuseError | FSUtil.Error>
   /** Commit only if an existing target still has the expected bytes. */
   readonly writeIfUnchanged: (
     input: ConditionalWriteInput,
@@ -98,17 +104,22 @@ const layer = Layer.effect(
     const fs = yield* FSUtil.Service
     const guard = (input: WriteInput, before: string) =>
       input.sessionID
-        ? Effect.tryPromise({
-            try: () =>
-              AutomaticChecks.guardReuse(
-                input.sessionID!,
-                input.target.canonical,
-                before,
-                typeof input.content === "string" ? input.content : new TextDecoder().decode(input.content),
-              ),
-            catch: (error) =>
-              new ReuseError({ message: error instanceof Error ? error.message : "Reuse check failed" }),
-          })
+        ? Effect.gen(function* () {
+            const after = typeof input.content === "string" ? input.content : new TextDecoder().decode(input.content)
+            if (input.approveUI)
+              yield* Jev.approveChange(input.sessionID!, input.target.canonical, before, after, input.approveUI)
+            yield* Effect.tryPromise({
+              try: () =>
+                AutomaticChecks.guardReuse(
+                  input.sessionID!,
+                  input.target.canonical,
+                  before,
+                  typeof input.content === "string" ? input.content : new TextDecoder().decode(input.content),
+                ),
+              catch: (error) =>
+                new ReuseError({ message: error instanceof Error ? error.message : "Reuse check failed" }),
+            })
+          }).pipe(Effect.interruptible)
         : Effect.void
     const locks = KeyedMutex.makeUnsafe<string>()
     const withTargetLock =
@@ -133,10 +144,13 @@ const layer = Layer.effect(
     const write = Effect.fn("FileMutation.write")((input: WriteInput) =>
       withTargetLock(input.target)(
         Effect.gen(function* () {
-          const existed = yield* fs.exists(input.target.canonical)
-          yield* guard(input, existed ? yield* fs.readFileString(input.target.canonical) : "")
+          const current = yield* fs
+            .readFile(input.target.canonical)
+            .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(undefined)))
+          yield* guard(input, current ? new TextDecoder().decode(current) : "")
+          yield* assertUnchanged({ target: input.target, expected: current })
           yield* fs.writeWithDirs(input.target.canonical, input.content)
-          return writeResult(input.target, existed)
+          return writeResult(input.target, current !== undefined)
         }),
       ),
     )
@@ -148,11 +162,10 @@ const layer = Layer.effect(
           const current = yield* fs
             .readFile(input.target.canonical)
             .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(undefined)))
-          yield* guard(input, current ? new TextDecoder().decode(current) : "")
-          yield* fs.writeWithDirs(
-            input.target.canonical,
-            joinBom(next.text, Boolean(current && hasUtf8Bom(current)) || next.bom),
-          )
+          const content = joinBom(next.text, Boolean(current && hasUtf8Bom(current)) || next.bom)
+          yield* guard({ ...input, content }, current ? new TextDecoder().decode(current) : "")
+          yield* assertUnchanged({ target: input.target, expected: current })
+          yield* fs.writeWithDirs(input.target.canonical, content)
           return writeResult(input.target, current !== undefined)
         }),
       ),
