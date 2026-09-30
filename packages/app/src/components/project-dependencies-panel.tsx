@@ -56,13 +56,20 @@ export function ProjectDependenciesPanel(props: { active: boolean }) {
       }
       const stop = sdk().event.listen((event) => {
         if (event.details.type !== "file.watcher.updated") return
-        if (!/(^|[/\\])(package\.json|bun\.lockb?|bunfig\.toml)$/.test(event.details.properties.file)) return
+        if (
+          !/(^|[/\\])(package\.json|bun\.lockb?|bunfig\.toml|\.nvmrc|\.node-version|\.bun-version|\.tool-versions)$/.test(
+            event.details.properties.file,
+          )
+        )
+          return
         refresh()
       })
       window.addEventListener("focus", refresh)
+      const interval = setInterval(refresh, 300_000)
       onCleanup(() => {
         stop()
         clearTimeout(timer)
+        clearInterval(interval)
         queued = false
         window.removeEventListener("focus", refresh)
       })
@@ -77,7 +84,7 @@ export function ProjectDependenciesPanel(props: { active: boolean }) {
   )
   return (
     <div class="flex h-full min-h-0 min-w-0 flex-col" data-component="project-dependencies">
-      <div class="flex shrink-0 items-center justify-between gap-2 p-4">
+      <div class="flex shrink-0 flex-wrap items-center justify-between gap-2 p-4">
         <span class="text-14-medium text-text-strong">{language.t("session.panel.dependencies")}</span>
         <Button variant="ghost" size="small" disabled={!available() || state.loading} onClick={() => void check()}>
           {language.t(state.loading ? "dependencies.checking" : "session.panel.refresh")}
@@ -102,6 +109,96 @@ export function ProjectDependenciesPanel(props: { active: boolean }) {
                 description={language.t("dependencies.scope")}
               />
             </div>
+          </Show>
+          <Show when={state.data?.environmentFailed}>
+            <p role="alert" class="text-13-regular text-text-strong">
+              {language.t("dependencies.environmentFailed")}
+            </p>
+          </Show>
+          <Show when={state.data?.environment}>
+            {(environment) => (
+              <section class="flex min-w-0 flex-col gap-3" aria-label={language.t("dependencies.environment")}>
+                <h3 class="text-13-medium text-text-strong">{language.t("dependencies.environment")}</h3>
+                <p class="text-12-regular text-text-weak">{language.t("dependencies.runtimeScope")}</p>
+                <dl class="flex flex-wrap gap-2 text-12-regular">
+                  <For each={environment().runtimes}>
+                    {(runtime) => (
+                      <div class="min-w-0 basis-24 flex-1 break-all">
+                        <dt class="text-text-weak">{language.t(`dependencies.runtime.${runtime.name}`)}</dt>
+                        <dd class="text-text-strong">{runtime.version || language.t("dependencies.unavailable")}</dd>
+                      </div>
+                    )}
+                  </For>
+                </dl>
+                <p class="text-12-regular text-text-weak">
+                  {language.t("dependencies.coverage", { count: environment().workspaces.length })}
+                </p>
+                <For each={environment().workspaces}>
+                  {(workspace) => (
+                    <details class="min-w-0 rounded-lg border border-border-weaker-base p-3">
+                      <summary class="cursor-pointer break-words text-13-medium text-text-strong">
+                        {workspace.name}
+                        <span class="block text-12-regular text-text-weak">
+                          {language.t("dependencies.inventoryCount", { count: workspace.dependencies.length })}
+                        </span>
+                        <Show
+                          when={
+                            workspace.warnings.length ||
+                            workspace.requirements.some((item) => item.status !== "matched") ||
+                            workspace.dependencies.some(
+                              (item) =>
+                                item.status === "missing" || item.status === "mismatch" || item.status === "unverified",
+                            )
+                          }
+                        >
+                          <span class="block text-12-regular text-text-strong">
+                            {language.t("dependencies.attention")}
+                          </span>
+                        </Show>
+                      </summary>
+                      <div class="mt-3 flex min-w-0 flex-col gap-3">
+                        <p class="break-all text-12-regular text-text-weak">{workspace.path}</p>
+                        <For each={workspace.warnings}>
+                          {(warning) => (
+                            <p class="text-12-regular text-text-strong">{language.t(`dependencies.${warning}`)}</p>
+                          )}
+                        </For>
+                        <For each={workspace.requirements}>
+                          {(item) => (
+                            <p class="break-words text-12-regular text-text-weak">
+                              {language.t("dependencies.requirement", {
+                                name: item.name,
+                                source: item.source,
+                                required: item.required,
+                                status: language.t(`dependencies.requirement.${item.status}`),
+                              })}
+                            </p>
+                          )}
+                        </For>
+                        <For each={workspace.dependencies}>
+                          {(item) => (
+                            <div class="min-w-0 text-12-regular">
+                              <p class="break-all text-text-strong">{item.name}</p>
+                              <p class="break-all text-text-weak">
+                                {language.t("dependencies.declaredVersion", { version: item.declared })}
+                              </p>
+                              <p class="break-all text-text-weak">
+                                {language.t("dependencies.installedVersion", {
+                                  version: item.installed || language.t("dependencies.unavailable"),
+                                })}
+                              </p>
+                              <Show when={item.status !== "installed"}>
+                                <p class="text-text-strong">{language.t(`dependencies.install.${item.status}`)}</p>
+                              </Show>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </details>
+                  )}
+                </For>
+              </section>
+            )}
           </Show>
           <Show when={state.data && state.data.status !== "checked" ? state.data.status : undefined}>
             {(status) => (

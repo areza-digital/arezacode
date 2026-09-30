@@ -84,6 +84,70 @@ test("automatically checks dependencies on opening, preserves filters, and handl
   await page.screenshot({ path: "/tmp/areza-dependencies-empty.png" })
 })
 
+test("shows runtime and workspace warnings even when no package updates are available", async ({ page }) => {
+  let result: ProjectDependencies = {
+    status: "checked",
+    checkedAt: 1,
+    packages: [],
+    environment: {
+      root: directory,
+      runtimes: [
+        { name: "node", version: "26.3.1" },
+        { name: "bun", version: "1.3.14" },
+      ],
+      workspaces: [
+        {
+          name: "@zaidimu/admin",
+          path: "apps/admin",
+          dependencies: [
+            { name: "typescript", declared: "^5.7.2", installed: "5.9.3", status: "installed" },
+            { name: "@types/node", declared: "^22.0.0", installed: "22.20.0", status: "installed" },
+            { name: "missing", declared: "^1.0.0", installed: "", status: "missing" },
+          ],
+          requirements: [{ name: "node", source: "engines", required: "^22", status: "mismatch" }],
+          warnings: ["nodeUnpinned", "nodeTypesMismatch"],
+        },
+      ],
+    },
+  }
+  await page.exposeFunction("checkTestDependencies", () => result)
+  await setup(page)
+  await page.goto("/")
+  await page.getByRole("button", { name: "Dependency project", exact: true }).click()
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "New tab", exact: true }).click()
+  await panel.getByRole("button", { name: "Dependencies", exact: true }).click()
+  const dependencies = panel.locator('[data-component="project-dependencies"]')
+  await expect(dependencies.getByText("26.3.1", { exact: true })).toBeVisible()
+  await expect(dependencies.getByText("1.3.14", { exact: true })).toBeVisible()
+  await expect(dependencies.getByText("Needs review", { exact: true })).toBeVisible()
+  await dependencies.locator("summary").click()
+  await expect(dependencies.getByText("Declared: ^5.7.2", { exact: true })).toBeVisible()
+  await expect(dependencies.getByText("Installed: 5.9.3", { exact: true })).toBeVisible()
+  await expect(
+    dependencies.getByText(
+      "Installed @types/node and available Node.js use different major versions. Review compatibility.",
+      { exact: true },
+    ),
+  ).toBeVisible()
+  await expect(
+    dependencies.getByText("Dependency is not installed or its version could not be read.", { exact: true }),
+  ).toBeVisible()
+  await page.screenshot({ path: "/tmp/areza-dependencies-environment-wide.png" })
+  await page.setViewportSize({ width: 1100, height: 900 })
+  await expect(dependencies).toBeVisible()
+  expect(await dependencies.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+  await page.screenshot({ path: "/tmp/areza-dependencies-environment-narrow.png" })
+  result = { ...result, status: "missingLock" }
+  await dependencies.getByRole("button", { name: "Refresh" }).click()
+  await expect(dependencies.getByRole("alert")).toContainText("No Bun lockfile found")
+  await expect(dependencies.getByText("26.3.1", { exact: true })).toBeVisible()
+  result = { status: "checked", checkedAt: 2, packages: [], environmentFailed: true }
+  await dependencies.getByRole("button", { name: "Refresh" }).click()
+  await expect(dependencies.getByRole("alert")).toContainText("This check is incomplete")
+  await expect(dependencies.getByText("26.3.1", { exact: true })).toHaveCount(0)
+})
+
 test("moves composer tools into a working overflow menu when space is tight", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 900 })
   await setup(page)

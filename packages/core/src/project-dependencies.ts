@@ -3,9 +3,10 @@ import { realpath, stat } from "node:fs/promises"
 import { isAbsolute, join } from "node:path"
 import { promisify, stripVTControlCharacters } from "node:util"
 import { Schema } from "effect"
+import { checkProjectEnvironment, Environment, projectRoot } from "./project-environment"
 
 export const workflow =
-  "When asked to check or update project dependencies, first use dependency_check for the active project. Review its current, within-range, and latest versions before proposing or applying updates. The check is read-only, covers direct dependencies across Bun workspaces, and is not a security audit. Respect project permissions and instructions for updates, then check again. Missing package.json, missing Bun lockfile, unavailable Bun, and failed checks are not up-to-date results."
+  "When asked to check or update project dependencies, first use dependency_check for the active project. Review current, within-range, and latest versions, workspace coverage, declared versus installed dependencies, available Node/Bun versions, runtime requirements and pin warnings. Available runtimes are resolved from the checker environment, not inspected running servers. The check is read-only, covers direct dependencies across Bun workspaces, and is not a security audit. Respect project permissions and instructions for updates, then check again. Missing package.json, missing Bun lockfile, unavailable Bun, failed or unverified checks are not up-to-date results."
 
 export const Input = Schema.Struct({})
 export const Output = Schema.Union([
@@ -23,8 +24,14 @@ export const Output = Schema.Union([
       }),
     ),
     checkedAt: Schema.Number,
+    environment: Schema.optional(Environment),
+    environmentFailed: Schema.optional(Schema.Boolean),
   }),
-  Schema.Struct({ status: Schema.Literals(["noPackage", "missingLock", "bunUnavailable", "failed"]) }),
+  Schema.Struct({
+    status: Schema.Literals(["noPackage", "missingLock", "bunUnavailable", "failed"]),
+    environment: Schema.optional(Environment),
+    environmentFailed: Schema.optional(Schema.Boolean),
+  }),
 ])
 export type ProjectDependencies = typeof Output.Type
 export type ProjectDependency = Extract<ProjectDependencies, { status: "checked" }>["packages"][number]
@@ -36,8 +43,10 @@ export async function checkProjectDependencies(directory: unknown, signal?: Abor
   signal?.throwIfAborted()
   if (typeof directory !== "string" || !isAbsolute(directory) || directory.includes("\0"))
     throw new Error("Invalid project directory")
-  const root = await realpath(directory)
-  if (!(await stat(root)).isDirectory()) throw new Error("Invalid project directory")
+  const resolved = await realpath(directory)
+  if (!(await stat(resolved)).isDirectory()) throw new Error("Invalid project directory")
+  const root = await projectRoot(resolved).catch(() => undefined)
+  if (!root) return { status: "failed", environmentFailed: true }
   if (signal) return scan(root, signal)
   const existing = pending.get(root)
   if (existing) return existing
@@ -48,6 +57,15 @@ export async function checkProjectDependencies(directory: unknown, signal?: Abor
 
 async function scan(root: string, signal?: AbortSignal): Promise<ProjectDependencies> {
   if (!(await stat(join(root, "package.json")).catch(() => undefined))?.isFile()) return { status: "noPackage" }
+  const [versions, environment] = await Promise.all([
+    checkVersions(root, signal).catch(() => ({ status: "failed" as const })),
+    checkProjectEnvironment(root, signal).catch(() => undefined),
+  ])
+  signal?.throwIfAborted()
+  return { ...versions, ...(environment ? { environment } : { environmentFailed: true }) }
+}
+
+async function checkVersions(root: string, signal?: AbortSignal): Promise<ProjectDependencies> {
   return execute("bun", ["outdated", "--recursive", "--no-progress"], {
     cwd: root,
     signal,

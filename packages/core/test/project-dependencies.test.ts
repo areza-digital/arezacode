@@ -59,7 +59,10 @@ Note: The * indicates that version isn't true latest due to minimum release age
     try {
       expect(await checkProjectDependencies(directory)).toEqual({ status: "noPackage" })
       await Bun.write(join(directory, "package.json"), JSON.stringify({ name: "dependency-test", private: true }))
-      expect(await checkProjectDependencies(directory)).toEqual({ status: "missingLock" })
+      expect(await checkProjectDependencies(directory)).toMatchObject({
+        status: "missingLock",
+        environment: { workspaces: [{ name: "dependency-test" }] },
+      })
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
