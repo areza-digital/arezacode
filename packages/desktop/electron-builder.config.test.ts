@@ -23,7 +23,7 @@ for (const channel of channels) {
     expect(config.appId).toBe(channel.appId)
     expect(config.publish).toEqual({
       provider: "github",
-      owner: "OCKOIERDNY",
+      owner: "areza-digital",
       repo: "arezacode",
       channel: "latest",
       updaterCacheDirName: "arezacode-updater",

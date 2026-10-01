@@ -1,6 +1,6 @@
 export const UPDATE_SOURCE = {
   provider: "github",
-  owner: "OCKOIERDNY",
+  owner: "areza-digital",
   repo: "arezacode",
   channel: "latest",
   updaterCacheDirName: "arezacode-updater",

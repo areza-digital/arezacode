@@ -355,7 +355,7 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
             <button
               type="button"
               class="flex items-center text-text-interactive-base gap-1"
-              onClick={() => platform.openExternal("https://github.com/OCKOIERDNY/arezacode/issues")}
+              onClick={() => platform.openExternal("https://github.com/areza-digital/arezacode/issues")}
             >
               <div>{language.t("error.page.report.github")}</div>
               <Icon name="github" class="text-text-interactive-base" />
